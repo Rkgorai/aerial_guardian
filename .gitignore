@@ -1,9 +1,13 @@
 env/
-
 VisDrone2019-MOT-val/
 yolo_dataset/
-
 images1/
 runs/
-
+output/
+test_videos/
 *.zip
+*.pt
+benchmark_results.json
+__pycache__/
+*.pyc
+.DS_Store
