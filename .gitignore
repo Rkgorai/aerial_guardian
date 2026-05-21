@@ -1,0 +1,9 @@
+env/
+
+VisDrone2019-MOT-val/
+yolo_dataset/
+
+images1/
+runs/
+
+*.zip

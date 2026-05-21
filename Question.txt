@@ -1,0 +1,34 @@
+As the next step, we'd like you to complete a practical assignment to see how you tackle the specific challenges of aerial imagery.
+
+The Challenge: "The Aerial Guardian"
+Drones present unique computer vision hurdles: high altitudes, small target sizes, and significant camera motion. Your task is to build a pipeline that can detect and track multiple vehicles from a moving drone platform.
+
+Dataset
+Dataset: You can use the Validation Set of Task 4 MOT of VisDrone Dataset https://drive.google.com/file/d/1rqnKe9IgU_crMaxRoel9_nuUsMEBBVQu/view?usp=sharing   https://github.com/VisDrone/VisDrone-Dataset  
+
+Target Classes: Persons 
+
+Technical Tasks
+Detection: Implement a detector (e.g., YOLO series, EfficientDet) optimized for small-scale objects.
+
+Tracking: Implement a Multi-Object Tracking (MOT) algorithm (e.g., ByteTrack, DeepSORT). Your solution should attempt to maintain consistent IDs despite drone movement.
+
+Optimization: Since this is intended for a drone, please provide the FPS (Frames Per Second) of your pipeline and specify the hardware used for the test.
+
+Deliverables  Please submit the following :
+Code: A link to a private GitHub/GitLab repo (please grant access to my email). Include a README with setup instructions.
+
+Output Video: A processed version of the clip showing bounding boxes, unique ID labels, and a short "tail" or trajectory line for each tracked vehicle.
+
+Summary Report: A brief document (or section in the README) explaining:
+
+Your choice of architecture and how you handled small object detection.
+
+How you addressed "ID switching" caused by drone ego-motion or occlusions.
+
+How you would adapt this model to run on edge hardware (e.g., NVIDIA Jetson).
+
+We aren't just looking for high accuracy; we value engineering trade-offs. We are interested in how you balance inference speed with precision and how you handle the "noise" of a moving camera.
+PS : You don't need to implement everything from scratch, you can leverage what exists in the open source. You may fine-tune, refine, etc as per requirement. Keep in mind it should not require heavy GPU compute, it should be lightweight. This is one of the main required attributes of your solution. For your reference, the overall model size should not exceed 300 MB. Do not just download and run existing models. I am looking forward to what you add to existing models to make them more adapted to the drone scenario. You should be able to explain the working of the model you choose as a base.
+
+If you have any questions regarding the dataset or the scope, feel free to reach out. We look forward to seeing your approach. 
