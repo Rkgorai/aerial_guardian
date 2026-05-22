@@ -96,6 +96,93 @@ class KalmanFilter:
         return new_mean, new_covariance
 
 
+class KalmanFilterXYWH(KalmanFilter):
+    """Kalman filter for tracking center bounding boxes with width and height directly.
+    
+    The 8-dimensional state space: [x, y, w, h, vx, vy, vw, vh]
+    where (x, y) is center, w is width, h is height, and
+    vx, vy, vw, vh are their respective velocities.
+    """
+
+    def initiate(self, measurement):
+        """Initialize track state from a measurement [x, y, w, h]."""
+        mean_pos = measurement
+        mean_vel = np.zeros_like(mean_pos)
+        mean = np.r_[mean_pos, mean_vel]
+
+        std = [
+            2 * self._std_weight_position * measurement[2],
+            2 * self._std_weight_position * measurement[3],
+            2 * self._std_weight_position * measurement[2],
+            2 * self._std_weight_position * measurement[3],
+            10 * self._std_weight_velocity * measurement[2],
+            10 * self._std_weight_velocity * measurement[3],
+            10 * self._std_weight_velocity * measurement[2],
+            10 * self._std_weight_velocity * measurement[3],
+        ]
+        covariance = np.diag(np.square(std))
+        return mean, covariance
+
+    def predict(self, mean, covariance):
+        """Predict the next state distribution using constant velocity motion model."""
+        std_pos = [
+            self._std_weight_position * mean[2],
+            self._std_weight_position * mean[3],
+            self._std_weight_position * mean[2],
+            self._std_weight_position * mean[3],
+        ]
+        std_vel = [
+            self._std_weight_velocity * mean[2],
+            self._std_weight_velocity * mean[3],
+            self._std_weight_velocity * mean[2],
+            self._std_weight_velocity * mean[3],
+        ]
+        motion_cov = np.diag(np.square(np.r_[std_pos, std_vel]))
+
+        mean = np.dot(mean, self._motion_mat.T)
+        covariance = np.linalg.multi_dot((self._motion_mat, covariance, self._motion_mat.T)) + motion_cov
+        return mean, covariance
+
+    def project(self, mean, covariance):
+        """Project state distribution to observation (measurement) space."""
+        std = [
+            self._std_weight_position * mean[2],
+            self._std_weight_position * mean[3],
+            self._std_weight_position * mean[2],
+            self._std_weight_position * mean[3],
+        ]
+        innovation_cov = np.diag(np.square(std))
+
+        mean = np.dot(self._update_mat, mean)
+        covariance = np.linalg.multi_dot((self._update_mat, covariance, self._update_mat.T))
+        return mean, covariance + innovation_cov
+
+    def multi_predict(self, mean, covariance):
+        """Vectorized Kalman filter prediction step."""
+        std_pos = [
+            self._std_weight_position * mean[:, 2],
+            self._std_weight_position * mean[:, 3],
+            self._std_weight_position * mean[:, 2],
+            self._std_weight_position * mean[:, 3],
+        ]
+        std_vel = [
+            self._std_weight_velocity * mean[:, 2],
+            self._std_weight_velocity * mean[:, 3],
+            self._std_weight_velocity * mean[:, 2],
+            self._std_weight_velocity * mean[:, 3],
+        ]
+        sqr = np.square(np.r_[std_pos, std_vel]).T
+
+        motion_cov = [np.diag(sqr[i]) for i in range(len(mean))]
+        motion_cov = np.asarray(motion_cov)
+
+        mean = np.dot(mean, self._motion_mat.T)
+        left = np.dot(self._motion_mat, covariance).transpose((1, 0, 2))
+        covariance = np.dot(left, self._motion_mat.T) + motion_cov
+
+        return mean, covariance
+
+
 class STrack(BaseTrack):
     """Represent a single track segment for ByteTrack."""
 

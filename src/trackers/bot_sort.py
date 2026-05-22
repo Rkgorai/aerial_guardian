@@ -3,7 +3,7 @@ from collections import deque
 from scipy.spatial.distance import cdist
 
 from trackers.basetrack import TrackState
-from trackers.byte_tracker import STrack, BYTETracker
+from trackers.byte_tracker import STrack, BYTETracker, KalmanFilterXYWH
 from trackers.gmc import GMC
 from trackers.reid import ReIDManager
 
@@ -40,6 +40,25 @@ class BOTrack(STrack):
                 self.smooth_feat /= smooth_norm
         self.features.append(feat)
 
+    @staticmethod
+    def to_xywh(bbox):
+        """Convert bounding box [x, y, w, h] to xywh representation (noop, but keeps API matching)."""
+        return np.asarray(bbox, dtype=np.float32)
+
+    def activate(self, kalman_filter, frame_id):
+        """Activate a new track."""
+        self.kalman_filter = kalman_filter
+        self.track_id = self.next_id()
+        self.mean, self.covariance = self.kalman_filter.initiate(self.to_xywh(self._bbox))
+        
+        self.tracklet_len = 0
+        self.state = TrackState.Tracked
+        if frame_id == 1:
+            self.is_activated = True
+        self.frame_id = frame_id
+        self.start_frame = frame_id
+        self.time_since_update = 0
+
     def apply_gmc(self, H):
         """Compensate for camera ego-motion by applying homography matrix H.
         
@@ -60,15 +79,45 @@ class BOTrack(STrack):
 
     def update(self, new_track, frame_id):
         """Update track with matching detection and append its appearance embedding."""
-        super().update(new_track, frame_id)
+        self.frame_id = frame_id
+        self.tracklet_len += 1
+        
+        self.mean, self.covariance = self.kalman_filter.update(
+            self.mean, self.covariance, self.to_xywh(new_track._bbox)
+        )
+        self.score = new_track.score
+        self.state = TrackState.Tracked
+        self.is_activated = True
+        self.time_since_update = 0
+        self.history.append(new_track._bbox.copy())
+
         if new_track.curr_feature is not None:
             self.update_features(new_track.curr_feature)
 
     def re_activate(self, new_track, frame_id, new_id=False):
         """Re-activate lost track with matching detection and append appearance embedding."""
-        super().re_activate(new_track, frame_id, new_id)
+        self.mean, self.covariance = self.kalman_filter.update(
+            self.mean, self.covariance, self.to_xywh(new_track._bbox)
+        )
+        self.score = new_track.score
+        self.state = TrackState.Tracked
+        self.is_activated = True
+        self.time_since_update = 0
+        self.frame_id = frame_id
+        self.tracklet_len = 0
+        if new_id:
+            self.track_id = self.next_id()
+        self.history.append(new_track._bbox.copy())
+
         if new_track.curr_feature is not None:
             self.update_features(new_track.curr_feature)
+
+    @property
+    def bbox(self):
+        """Get the current estimated bounding box [x_center, y_center, w, h]."""
+        if self.mean is None:
+            return self._bbox.copy()
+        return self.mean[:4].copy()
 
 
 class BOTSORT(BYTETracker):
@@ -76,6 +125,7 @@ class BOTSORT(BYTETracker):
 
     def __init__(self, cfg):
         super().__init__(cfg)
+        self.kalman_filter = KalmanFilterXYWH()
         
         # Gating thresholds
         self.proximity_thresh = cfg.get("proximity_thresh", 0.5)
