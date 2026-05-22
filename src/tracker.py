@@ -1,7 +1,10 @@
 """
-ByteTrack implementation following the official ByteTrack paper.
-Two-stage association: high-confidence detections matched first,
-then low-confidence detections matched with remaining tracks.
+ByteTrack implementation adapted for drone/ aerial footage.
+
+Key differences from standard ByteTrack:
+- No velocity-based prediction (camera ego-motion makes velocity estimates harmful)
+- Higher new_track_thresh to reduce false track creations
+- Proper two-stage association with lenient IoU thresholds
 """
 
 import numpy as np
@@ -10,15 +13,21 @@ from collections import deque
 
 
 class KalmanFilter:
-    """Kalman Filter for tracking bounding boxes with constant velocity model."""
+    """Kalman filter with constant position model (no velocity prediction).
+    
+    For drone footage, velocity prediction is harmful because camera ego-motion
+    dominates frame-to-frame displacement and is not constant-velocity.
+    """
 
     def __init__(self):
         # State: [x, y, w, h, vx, vy, vw, vh]
+        # F is identity — position is NOT updated by velocity during predict.
+        # Velocity is maintained internally for covariance, but not used for prediction.
         self.F = np.eye(8)
-        self.F[0:4, 4:8] = np.eye(4)
+        # NOTE: self.F[0:4, 4:8] stays ZERO — no velocity contribution to position
         self.H = np.eye(4, 8)
-        self.Q = np.eye(8) * 0.01
-        self.R = np.eye(4) * 0.1
+        self.Q = np.eye(8) * 0.1
+        self.R = np.eye(4) * 0.05
         self.P = np.eye(8) * 10.0
 
     def init_state(self, bbox):
@@ -72,11 +81,10 @@ class Track:
 
 class ByteTrack:
     """
-    ByteTrack: Multi-Object Tracking by Associating Every Detection.
-    
-    Two-stage association:
-    Stage 1: Match high-score detections with all tracks
-    Stage 2: Match low-score detections with remaining tracks
+    ByteTrack adapted for aerial imagery.
+
+    Stage 1: Match high-score detections with all tracks (lenient IoU)
+    Stage 2: Match low-score detections with remaining tracks (stricter IoU)
     """
 
     def __init__(
@@ -84,12 +92,14 @@ class ByteTrack:
         track_thresh=0.5,
         match_thresh=0.8,
         low_thresh=0.1,
+        new_track_thresh=0.6,
         max_age=30,
         min_hits=3,
     ):
         self.track_thresh = track_thresh
         self.match_thresh = match_thresh
         self.low_thresh = low_thresh
+        self.new_track_thresh = new_track_thresh
         self.max_age = max_age
         self.min_hits = min_hits
         self.tracks = []
@@ -164,7 +174,7 @@ class ByteTrack:
 
         Returns: list of [x, y, w, h, track_id, confidence]
         """
-        # Split into high-score and low-score detections
+        # Split detections by score
         high_dets = [d for d in detections if d[4] >= self.track_thresh]
         low_dets = [d for d in detections if self.low_thresh <= d[4] < self.track_thresh]
 
@@ -172,15 +182,15 @@ class ByteTrack:
         for track in self.tracks:
             track.predict()
 
-        # Stage 1: associate high-score detections with all tracks
+        # --- Stage 1: match high-score detections with all tracks ---
         matches_1, u_track_1, u_det_1 = self.associate(
-            self.tracks, high_dets, self.match_thresh
+            self.tracks, high_dets, 1.0 - self.match_thresh
         )
 
         for t_idx, d_idx in matches_1:
             self.tracks[t_idx].update(high_dets[d_idx][:4], high_dets[d_idx][4])
 
-        # Stage 2: associate low-score detections with unmatched tracks
+        # --- Stage 2: match low-score detections with unmatched tracks ---
         if len(low_dets) > 0 and len(u_track_1) > 0:
             u_tracks = [self.tracks[i] for i in u_track_1]
             matches_2, u_track_2, _ = self.associate(u_tracks, low_dets, 0.5)
@@ -188,16 +198,17 @@ class ByteTrack:
             for t_idx, d_idx in matches_2:
                 u_tracks[t_idx].update(low_dets[d_idx][:4], low_dets[d_idx][4])
 
-        # Create new tracks from unmatched high-score detections
+        # --- Create new tracks ONLY from very confident unmatched detections ---
         for d_idx in u_det_1:
             det = high_dets[d_idx]
-            self.tracks.append(Track(self.next_id, det[:4], det[4]))
-            self.next_id += 1
+            if det[4] >= self.new_track_thresh:
+                self.tracks.append(Track(self.next_id, det[:4], det[4]))
+                self.next_id += 1
 
-        # Remove dead tracks
+        # --- Remove dead tracks ---
         self.tracks = [t for t in self.tracks if t.time_since_update <= self.max_age]
 
-        # Return active tracks
+        # --- Return active tracks ---
         results = []
         for track in self.tracks:
             if track.hits >= self.min_hits:

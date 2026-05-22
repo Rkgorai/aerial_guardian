@@ -37,6 +37,7 @@ class AerialGuardianPipeline:
             track_thresh=0.5,
             match_thresh=0.8,
             low_thresh=0.1,
+            new_track_thresh=0.6,
             max_age=30,
             min_hits=3,
         )
