@@ -5,6 +5,7 @@ images1/
 runs/
 output/
 test_videos/
+merged_videos/
 *.zip
 *.pt
 benchmark_results.json
