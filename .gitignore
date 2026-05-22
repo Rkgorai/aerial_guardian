@@ -6,6 +6,7 @@ runs/
 output/
 test_videos/
 merged_videos/
+models/
 *.zip
 *.pt
 benchmark_results.json
