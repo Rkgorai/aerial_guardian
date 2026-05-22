@@ -41,7 +41,68 @@ def parse_args():
         action="store_true",
         help="Use INT8 integer quantization (requires calibration data for high accuracy)",
     )
+    parser.add_argument(
+        "--no-dynamic",
+        action="store_true",
+        help="Disable dynamic batching / dynamic input axes",
+    )
+    parser.add_argument(
+        "--no-simplify",
+        action="store_true",
+        help="Disable model structure simplification (onnxslim / onnxsim)",
+    )
     return parser.parse_args()
+
+
+def get_export_kwargs(fmt, args):
+    """
+    Build safe and optimized export arguments for each specific model format.
+    Ultralytics YOLO.export() throws errors if unsupported arguments (like dynamic or int8)
+    are passed to certain formats (like tflite, ncnn, or onnx).
+    """
+    kwargs = {
+        "format": fmt,
+        "imgsz": args.imgsz,
+    }
+    
+    # 1. ONNX supports standard features (but NOT int8)
+    if fmt == "onnx":
+        kwargs["half"] = args.half
+        kwargs["dynamic"] = not args.no_dynamic
+        kwargs["simplify"] = not args.no_simplify
+        
+    # 2. TensorRT Engine supports all, but needs GPU/device configuration
+    elif fmt == "engine":
+        kwargs["half"] = args.half
+        kwargs["int8"] = args.int8
+        kwargs["dynamic"] = not args.no_dynamic
+        kwargs["simplify"] = not args.no_simplify
+        
+        # Only assign device=0 if GPU is actually available to avoid CUDA crash
+        try:
+            import torch
+            if torch.cuda.is_available():
+                kwargs["device"] = 0
+            else:
+                kwargs["device"] = "cpu"
+        except Exception:
+            kwargs["device"] = "cpu"
+            
+    # 3. OpenVINO supports half, int8 and dynamic
+    elif fmt == "openvino":
+        kwargs["half"] = args.half
+        kwargs["int8"] = args.int8
+        kwargs["dynamic"] = not args.no_dynamic
+        
+    # 4. TFLite does NOT support dynamic, simplify or half in standard Ultralytics CLI
+    elif fmt == "tflite":
+        kwargs["int8"] = args.int8
+        
+    # 5. NCNN does NOT support dynamic, simplify or int8 in standard Ultralytics CLI
+    elif fmt == "ncnn":
+        kwargs["half"] = args.half
+        
+    return kwargs
 
 
 def main():
@@ -58,6 +119,8 @@ def main():
     print(f"  Image Size:  {args.imgsz}")
     print(f"  FP16 (Half): {args.half}")
     print(f"  INT8 Quant:  {args.int8}")
+    print(f"  Dynamic:     {not args.no_dynamic}")
+    print(f"  Simplify:    {not args.no_simplify}")
     print(f"{'='*60}\n")
 
     # Load model
@@ -92,14 +155,10 @@ def main():
         print(f"\n--- Exporting to '{target_fmt.upper()}' format ---")
         
         try:
-            # Run Ultralytics export
-            exported_path = model.export(
-                format=target_fmt,
-                imgsz=args.imgsz,
-                half=args.half,
-                int8=args.int8,
-                dynamic=False,
-            )
+            # Run Ultralytics export with dynamically built, pruned arguments
+            export_kwargs = get_export_kwargs(target_fmt, args)
+            print(f"  Export parameters: {export_kwargs}")
+            exported_path = model.export(**export_kwargs)
             print(f"Successfully exported to '{target_fmt.upper()}'. Output path: {exported_path}")
             results[target_fmt] = exported_path
         except Exception as e:

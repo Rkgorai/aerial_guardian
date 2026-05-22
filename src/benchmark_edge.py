@@ -15,13 +15,70 @@ import numpy as np
 from ultralytics import YOLO
 
 
+def discover_models(model_dir):
+    """Discover all benchmarkable models in a directory."""
+    path = Path(model_dir)
+    if not path.exists() or not path.is_dir():
+        print(f"Error: Directory '{model_dir}' does not exist or is not a directory.", file=sys.stderr)
+        return []
+    
+    discovered = []
+    
+    # 1. Look for direct model files
+    exts = [".pt", ".onnx", ".tflite"]
+    try:
+        import torch
+        if torch.cuda.is_available():
+            exts.append(".engine")
+        else:
+            print("CUDA is not available. Skipping TensorRT (.engine) models from automatic discovery.")
+    except Exception:
+        pass
+        
+    for ext in exts:
+        discovered.extend(list(path.glob(f"*{ext}")))
+        
+    # 2. Look for model directories
+    for subdir in path.iterdir():
+        if not subdir.is_dir():
+            continue
+            
+        # Check for OpenVINO model
+        if subdir.name.endswith("_openvino_model") or (list(subdir.glob("*.xml")) and list(subdir.glob("*.bin"))):
+            discovered.append(subdir)
+            continue
+            
+        # Check for NCNN model
+        if subdir.name.endswith("_ncnn_model") or (list(subdir.glob("model.ncnn.bin")) and list(subdir.glob("model.ncnn.param"))):
+            discovered.append(subdir)
+            continue
+            
+        # Check for TFLite / SavedModel folder
+        if subdir.name.endswith("_saved_model") or (subdir / "saved_model.pb").exists():
+            # Find individual TFLite files inside
+            tflites = list(subdir.glob("*.tflite"))
+            if tflites:
+                discovered.extend(tflites)
+            else:
+                discovered.append(subdir) # Fallback to saved_model directory itself
+                
+    return [str(p) for p in discovered]
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Benchmark edge-optimized YOLOv8 models")
     parser.add_argument(
         "--models",
         type=str,
-        required=True,
+        required=False,
+        default=None,
         help="Comma-separated list of model files to benchmark (e.g. yolov8n.pt,yolov8n.onnx)",
+    )
+    parser.add_argument(
+        "--model-dir",
+        type=str,
+        default=None,
+        help="Directory containing multiple edge-optimized models to benchmark automatically",
     )
     parser.add_argument(
         "--imgsz",
@@ -35,7 +92,11 @@ def parse_args():
         default=100,
         help="Number of frames to benchmark per model",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.models and not args.model_dir:
+        parser.error("At least one of --models or --model-dir must be specified.")
+    return args
+
 
 
 def get_model_size_mb(model_path):
@@ -61,13 +122,6 @@ def benchmark_model(model_path, imgsz, num_frames=100):
     size_mb = get_model_size_mb(model_path)
     print(f"Model File Size: {size_mb:.2f} MB")
 
-    # Load model via Ultralytics (automatically routes based on extension)
-    try:
-        model = YOLO(str(model_path))
-    except Exception as e:
-        print(f"Error loading model: {e}", file=sys.stderr)
-        return None
-
     # Find sample images for benchmark
     images_dir = Path("yolo_dataset/images/val")
     if not images_dir.exists():
@@ -85,10 +139,15 @@ def benchmark_model(model_path, imgsz, num_frames=100):
     # Resize to benchmark size
     img = cv2.resize(img, (imgsz, imgsz))
 
-    # Warmup
-    print("Running warmup frames...")
-    for _ in range(5):
-        _ = model(img, imgsz=imgsz, verbose=False)
+    # Load model and run warmup via Ultralytics (automatically routes based on extension)
+    try:
+        model = YOLO(str(model_path))
+        print("Running warmup frames...")
+        for _ in range(5):
+            _ = model(img, imgsz=imgsz, verbose=False)
+    except Exception as e:
+        print(f"Error loading or warming up model: {e}", file=sys.stderr)
+        return None
 
     # Benchmarking
     print(f"Running {num_frames} timed inference runs...")
@@ -156,7 +215,20 @@ def generate_report(results):
 
 def main():
     args = parse_args()
-    model_paths = [m.strip() for m in args.models.split(",")]
+    model_paths = []
+    
+    if args.models:
+        model_paths.extend([m.strip() for m in args.models.split(",")])
+        
+    if args.model_dir:
+        dir_models = discover_models(args.model_dir)
+        if dir_models:
+            print(f"Discovered {len(dir_models)} models in '{args.model_dir}':")
+            for m in sorted(dir_models):
+                print(f"  - {m}")
+            model_paths.extend(sorted(dir_models))
+        else:
+            print(f"Warning: No models discovered in directory '{args.model_dir}'")
 
     results = []
     for path in model_paths:
