@@ -1,0 +1,16 @@
+# Ultralytics-style BoT-SORT Configuration
+# Optimized for aerial/drone imagery with ReID and camera motion compensation
+
+tracker_type: botsort       # tracker type, ['bytetrack', 'botsort']
+track_high_thresh: 0.25     # threshold for the first association (Ultralytics default)
+track_low_thresh: 0.1       # threshold for the second association
+new_track_thresh: 0.25      # threshold for initiating a new track (Ultralytics default)
+track_buffer: 30            # buffer to keep lost tracks alive (frames)
+match_thresh: 0.8           # IoU threshold for matching tracks with detections
+fuse_score: true            # fuse detection confidence with IoU for matching
+
+# BoT-SORT specific: ReID & Global Motion Compensation
+gmc_method: orb             # camera ego-motion compensation method ['none', 'orb']
+proximity_thresh: 0.5       # spatial proximity gating threshold (IoU distance)
+appearance_thresh: 0.25     # appearance gating threshold (cosine distance)
+reid_weights: 'resnet18'    # ReID backbone model ['resnet18', 'mobilenet']
