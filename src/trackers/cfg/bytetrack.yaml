@@ -1,0 +1,10 @@
+# Ultralytics-style ByteTrack Configuration
+# Optimized for aerial/drone imagery with small objects
+
+tracker_type: bytetrack    # tracker type, ['bytetrack', 'botsort']
+track_high_thresh: 0.25    # threshold for the first association (Ultralytics default)
+track_low_thresh: 0.1      # threshold for the second association
+new_track_thresh: 0.25     # threshold for initiating a new track (Ultralytics default)
+track_buffer: 30           # buffer to keep lost tracks alive (frames)
+match_thresh: 0.8          # IoU threshold for matching tracks with detections
+fuse_score: true           # fuse detection confidence with IoU for matching

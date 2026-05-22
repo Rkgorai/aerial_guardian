@@ -11,9 +11,17 @@ import numpy as np
 from ultralytics import YOLO
 
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from pathlib import Path
 
-from tracker import ByteTrack
+# Add src and parent directories to system path for flexible loading
+src_dir = Path(__file__).parent
+if str(src_dir) not in sys.path:
+    sys.path.insert(0, str(src_dir))
+root_dir = src_dir.parent
+if str(root_dir) not in sys.path:
+    sys.path.insert(0, str(root_dir))
+
+from trackers import create_tracker
 
 
 COLORS = np.random.randint(0, 255, size=(1000, 3), dtype=np.uint8)
@@ -28,19 +36,15 @@ class AerialGuardianPipeline:
         conf_thresh=0.25,
         iou_thresh=0.5,
         img_size=640,
+        tracker_cfg="bytetrack.yaml",
     ):
         self.model = YOLO(model_path)
         self.conf_thresh = conf_thresh
         self.iou_thresh = iou_thresh
         self.img_size = img_size
-        self.tracker = ByteTrack(
-            track_thresh=0.5,
-            match_thresh=0.8,
-            low_thresh=0.1,
-            new_track_thresh=0.6,
-            max_age=30,
-            min_hits=3,
-        )
+        
+        # Dynamically create tracker based on config name/path (e.g. 'bytetrack.yaml' or 'botsort.yaml')
+        self.tracker = create_tracker(tracker_cfg, device="cpu")
         self.track_history = {}
 
     def detect(self, frame):
@@ -150,7 +154,7 @@ class AerialGuardianPipeline:
             frame_count += 1
 
             detections = self.detect(frame)
-            tracks = self.tracker.update(detections)
+            tracks = self.tracker.update(detections, frame)
 
             elapsed = time.time() - start_time
             current_fps = frame_count / elapsed if elapsed > 0 else 0
@@ -181,9 +185,10 @@ def main():
     parser.add_argument("--model", type=str, required=True, help="Path to YOLO model")
     parser.add_argument("--input", type=str, required=True, help="Input video path")
     parser.add_argument("--output", type=str, default="output.mp4", help="Output video path")
-    parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold")
+    parser.add_argument("--conf", type=float, default=0.15, help="Confidence threshold")
     parser.add_argument("--iou", type=float, default=0.5, help="IoU threshold")
     parser.add_argument("--imgsz", type=int, default=640, help="Image size")
+    parser.add_argument("--tracker", type=str, default="bytetrack.yaml", help="Tracker config name or path")
     args = parser.parse_args()
 
     pipeline = AerialGuardianPipeline(
@@ -191,6 +196,7 @@ def main():
         conf_thresh=args.conf,
         iou_thresh=args.iou,
         img_size=args.imgsz,
+        tracker_cfg=args.tracker,
     )
 
     pipeline.process_video(args.input, args.output)
