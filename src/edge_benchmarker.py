@@ -16,7 +16,7 @@ from ultralytics import YOLO
 
 
 def discover_models(model_dir):
-    """Discover all benchmarkable models in a directory."""
+    """Discover all benchmarkable models in a directory recursively, ignoring virtualenvs and hidden folders."""
     path = Path(model_dir)
     if not path.exists() or not path.is_dir():
         print(f"Error: Directory '{model_dir}' does not exist or is not a directory.", file=sys.stderr)
@@ -24,7 +24,7 @@ def discover_models(model_dir):
     
     discovered = []
     
-    # 1. Look for direct model files
+    # 1. Supported direct file extensions
     exts = [".pt", ".onnx", ".tflite"]
     try:
         import torch
@@ -35,34 +35,61 @@ def discover_models(model_dir):
     except Exception:
         pass
         
-    for ext in exts:
-        discovered.extend(list(path.glob(f"*{ext}")))
+    # Standard directories to completely ignore during recursive traversal
+    ignore_dirs = {"env", "venv", ".git", ".gemini", ".system_generated", "__pycache__", "node_modules", "runs"}
         
-    # 2. Look for model directories
-    for subdir in path.iterdir():
-        if not subdir.is_dir():
+    # We will search the entire directory tree recursively
+    for p in path.rglob("*"):
+        # Check if this path contains any ignored directory in its parts
+        if any(part in ignore_dirs or part.startswith(".") for part in p.parts):
             continue
             
-        # Check for OpenVINO model
-        if subdir.name.endswith("_openvino_model") or (list(subdir.glob("*.xml")) and list(subdir.glob("*.bin"))):
-            discovered.append(subdir)
+        # 1. Check for files with supported extensions
+        if p.is_file() and p.suffix in exts:
+            discovered.append(p)
             continue
             
-        # Check for NCNN model
-        if subdir.name.endswith("_ncnn_model") or (list(subdir.glob("model.ncnn.bin")) and list(subdir.glob("model.ncnn.param"))):
-            discovered.append(subdir)
-            continue
-            
-        # Check for TFLite / SavedModel folder
-        if subdir.name.endswith("_saved_model") or (subdir / "saved_model.pb").exists():
-            # Find individual TFLite files inside
-            tflites = list(subdir.glob("*.tflite"))
-            if tflites:
-                discovered.extend(tflites)
-            else:
-                discovered.append(subdir) # Fallback to saved_model directory itself
+        # 2. Check for OpenVINO model directory
+        if p.is_dir():
+            if p.name.endswith("_openvino_model") or (list(p.glob("*.xml")) and list(p.glob("*.bin"))):
+                discovered.append(p)
+                continue
                 
-    return [str(p) for p in discovered]
+            # Check for NCNN model directory
+            if p.name.endswith("_ncnn_model") or (list(p.glob("model.ncnn.bin")) and list(p.glob("model.ncnn.param"))):
+                discovered.append(p)
+                continue
+                
+            # Check for TFLite / SavedModel folder
+            if p.name.endswith("_saved_model") or (p / "saved_model.pb").exists():
+                tflites = list(p.glob("*.tflite"))
+                if tflites:
+                    discovered.extend(tflites)
+                else:
+                    discovered.append(p)
+                continue
+                
+    # Deduplicate in case files/folders are discovered multiple times
+    unique_discovered = []
+    seen = set()
+    for p in discovered:
+        abs_p = p.resolve()
+        if abs_p not in seen:
+            seen.add(abs_p)
+            unique_discovered.append(p)
+            
+    # Filter out files inside OpenVINO/NCNN/SavedModel directories that we already discovered as directories
+    final_discovered = []
+    for p in unique_discovered:
+        is_sub_file = False
+        for parent in p.parents:
+            if parent in unique_discovered:
+                is_sub_file = True
+                break
+        if not is_sub_file:
+            final_discovered.append(p)
+            
+    return [str(p) for p in final_discovered]
 
 
 def parse_args():
@@ -92,6 +119,18 @@ def parse_args():
         default=100,
         help="Number of frames to benchmark per model",
     )
+    parser.add_argument(
+        "--save-json",
+        type=str,
+        default=None,
+        help="Path to save benchmark results in JSON format (e.g. output/results.json)",
+    )
+    parser.add_argument(
+        "--save-csv",
+        type=str,
+        default=None,
+        help="Path to save benchmark results in CSV format (e.g. output/results.csv)",
+    )
     args = parser.parse_args()
     if not args.models and not args.model_dir:
         parser.error("At least one of --models or --model-dir must be specified.")
@@ -111,6 +150,28 @@ def get_model_size_mb(model_path):
     # If it is a folder (like TFLite or OpenVINO folders)
     total_size = sum(f.stat().st_size for f in path.glob("**/*") if f.is_file())
     return total_size / (1024 * 1024)
+
+
+def extract_precision(model_path):
+    """Extract precision type (fp32, fp16, int8) from path structure or filename."""
+    p = Path(model_path)
+    
+    # 1. Check parent folder name first (our structured format)
+    parent_name = p.parent.name.lower()
+    if parent_name in ["fp32", "fp16", "int8"]:
+        return parent_name.upper()
+        
+    # 2. Check filename clues
+    filename = p.name.lower()
+    if "int8" in filename or "quant" in filename:
+        return "INT8"
+    if "fp16" in filename or "float16" in filename or "half" in filename:
+        return "FP16"
+    if "fp32" in filename or "float32" in filename:
+        return "FP32"
+        
+    # 3. Default fallback based on standard formats
+    return "FP32"
 
 
 def benchmark_model(model_path, imgsz, num_frames=100):
@@ -176,9 +237,12 @@ def benchmark_model(model_path, imgsz, num_frames=100):
     print(f"  P95 Latency : {p95:.2f} ms")
     print(f"  P99 Latency : {p99:.2f} ms")
 
+    precision = extract_precision(model_path)
+
     return {
         "model_name": Path(model_path).name,
         "format": Path(model_path).suffix or "folder",
+        "precision": precision,
         "size_mb": size_mb,
         "avg_latency_ms": avg_latency,
         "std_latency_ms": std_latency,
@@ -189,15 +253,43 @@ def benchmark_model(model_path, imgsz, num_frames=100):
     }
 
 
+def save_json_results(results, save_path):
+    """Save benchmark results to a JSON file."""
+    try:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        with open(save_path, "w", encoding="utf-8") as f:
+            json.dump(results, f, indent=4)
+        print(f"Benchmark results successfully saved to JSON: {save_path}")
+    except Exception as e:
+        print(f"Error saving JSON results: {e}", file=sys.stderr)
+
+
+def save_csv_results(results, save_path):
+    """Save benchmark results to a CSV file."""
+    try:
+        import csv
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        if not results:
+            return
+        headers = list(results[0].keys())
+        with open(save_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=headers)
+            writer.writeheader()
+            writer.writerows(results)
+        print(f"Benchmark results successfully saved to CSV: {save_path}")
+    except Exception as e:
+        print(f"Error saving CSV results: {e}", file=sys.stderr)
+
+
 def generate_report(results):
     """Display a clean comparative Markdown table."""
-    print(f"\n{'='*60}")
+    print(f"\n{'='*80}")
     print("COMPARATIVE EDGE PERFORMANCE REPORT")
-    print(f"{'='*60}\n")
+    print(f"{'='*80}\n")
 
     # Table Header
-    header = f"| {'Model Format':<22} | {'File Size (MB)':<14} | {'Avg Latency (ms)':<16} | {'Avg FPS':<10} | {'P95 Latency (ms)':<16} |"
-    divider = "| " + "-"*22 + " | " + "-"*14 + " | " + "-"*16 + " | " + "-"*10 + " | " + "-"*16 + " |"
+    header = f"| {'Model Format':<22} | {'Precision':<10} | {'File Size (MB)':<14} | {'Avg Latency (ms)':<16} | {'Avg FPS':<10} | {'P95 Latency (ms)':<16} |"
+    divider = "| " + "-"*22 + " | " + "-"*10 + " | " + "-"*14 + " | " + "-"*16 + " | " + "-"*10 + " | " + "-"*16 + " |"
     
     print(header)
     print(divider)
@@ -205,6 +297,7 @@ def generate_report(results):
     for r in results:
         print(
             f"| {r['model_name']:<22} | "
+            f"{r['precision']:<10} | "
             f"{r['size_mb']:<14.2f} | "
             f"{r['avg_latency_ms']:<16.2f} | "
             f"{r['fps']:<10.2f} | "
@@ -242,6 +335,12 @@ def main():
 
     if results:
         generate_report(results)
+        
+        # Save results if requested
+        if args.save_json:
+            save_json_results(results, args.save_json)
+        if args.save_csv:
+            save_csv_results(results, args.save_csv)
     else:
         print("Error: No models benchmarked successfully.", file=sys.stderr)
         sys.exit(1)
