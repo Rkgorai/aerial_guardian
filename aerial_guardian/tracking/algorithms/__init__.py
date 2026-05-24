@@ -2,8 +2,8 @@ import os
 from pathlib import Path
 import yaml
 
-from trackers.byte_tracker import BYTETracker
-from trackers.bot_sort import BOTSORT
+from aerial_guardian.tracking.algorithms.byte_tracker import BYTETracker
+from aerial_guardian.tracking.algorithms.bot_sort import BOTSORT
 
 # Registry of available tracking algorithms
 TRACKER_MAP = {

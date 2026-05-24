@@ -2,10 +2,10 @@ import numpy as np
 from collections import deque
 from scipy.spatial.distance import cdist
 
-from trackers.basetrack import TrackState
-from trackers.byte_tracker import STrack, BYTETracker, KalmanFilterXYWH
-from trackers.gmc import GMC
-from trackers.reid import ReIDManager
+from aerial_guardian.tracking.algorithms.basetrack import TrackState
+from aerial_guardian.tracking.algorithms.byte_tracker import STrack, BYTETracker, KalmanFilterXYWH
+from aerial_guardian.tracking.algorithms.gmc import GMC
+from aerial_guardian.tracking.algorithms.reid import ReIDManager
 
 
 class BOTrack(STrack):

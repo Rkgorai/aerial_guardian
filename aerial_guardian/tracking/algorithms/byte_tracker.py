@@ -3,7 +3,7 @@ import scipy.linalg
 from scipy.optimize import linear_sum_assignment
 from collections import deque
 
-from trackers.basetrack import BaseTrack, TrackState
+from aerial_guardian.tracking.algorithms.basetrack import BaseTrack, TrackState
 
 
 class KalmanFilter:
