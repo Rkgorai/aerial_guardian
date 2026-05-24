@@ -4,15 +4,14 @@ yolo_dataset/
 images1/
 runs/
 output/
-test_videos/
+data/
 merged_videos/
-models/
+weights/
 *.zip
 *.pt
 benchmark_results.json
 __pycache__/
 *.pyc
 .DS_Store
-src/inference/
-# src/benchmark_results/
-# 
+aerial_guardian/inference/
+aerial_guardian/evaluation/benchmark_results/

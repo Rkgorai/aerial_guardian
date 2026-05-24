@@ -10,19 +10,7 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
-import sys
-from pathlib import Path
-
-# Add src and parent directories to system path for flexible loading
-src_dir = Path(__file__).parent
-if str(src_dir) not in sys.path:
-    sys.path.insert(0, str(src_dir))
-root_dir = src_dir.parent
-if str(root_dir) not in sys.path:
-    sys.path.insert(0, str(root_dir))
-
-from trackers import create_tracker
-
+from aerial_guardian.tracking.algorithms import create_tracker
 
 COLORS = np.random.randint(0, 255, size=(1000, 3), dtype=np.uint8)
 

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aerial_guardian"
+version = "0.1.0"
+description = "Edge-Optimized Aerial Object Tracking Pipeline"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    {name = "Rahul", email = "rahul@example.com"}
+]
+dependencies = [
+    "ultralytics>=8.0.0",
+    "opencv-python-headless>=4.8.0",
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "pyyaml>=6.0",
+    "onnx>=1.14.0",
+    "onnxslim>=0.1.1",
+    "onnxruntime>=1.16.0",
+    "openvino>=2023.2.0",
+    "ncnn>=1.0.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aerial_guardian", "aerial_guardian.*"]

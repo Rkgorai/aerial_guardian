@@ -1,3 +1,21 @@
+Metadata-Version: 2.4
+Name: aerial_guardian
+Version: 0.1.0
+Summary: Edge-Optimized Aerial Object Tracking Pipeline
+Author-email: Rahul <rahul@example.com>
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: ultralytics>=8.0.0
+Requires-Dist: opencv-python-headless>=4.8.0
+Requires-Dist: numpy>=1.24.0
+Requires-Dist: scipy>=1.10.0
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: onnx>=1.14.0
+Requires-Dist: onnxslim>=0.1.1
+Requires-Dist: onnxruntime>=1.16.0
+Requires-Dist: openvino>=2023.2.0
+Requires-Dist: ncnn>=1.0.0
+
 # 🛡️ Aerial Guardian: Edge-Optimized Aerial Object Tracking
 
 Lightweight, high-throughput multi-object detection and tracking pipeline optimized for aerial imagery. Designed specifically for tracking "Persons" from moving drone platforms under ego-motion, occlusions, and scale changes, with an end-to-end edge deployment optimization suite.
