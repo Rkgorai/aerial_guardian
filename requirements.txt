@@ -1,5 +1,20 @@
+# Core Project Dependencies
 ultralytics>=8.0.0
 opencv-python-headless>=4.8.0
 numpy>=1.24.0
 scipy>=1.10.0
 pyyaml>=6.0
+
+# ONNX Formats & Optimization
+onnx>=1.14.0
+onnxslim>=0.1.1
+onnxruntime>=1.16.0  # Standard ONNX Runtime (CPU-optimized, compatible everywhere)
+
+# TensorFlow & TFLite Optimization
+# tensorflow
+
+# OpenVINO Integration (Intel Platform CPU/GPU)
+openvino>=2023.2.0
+
+# NCNN Integration (Low-resource ARM CPU/GPU)
+ncnn>=1.0.0

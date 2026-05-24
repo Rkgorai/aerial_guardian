@@ -13,3 +13,6 @@ benchmark_results.json
 __pycache__/
 *.pyc
 .DS_Store
+src/inference/
+# src/benchmark_results/
+# 
