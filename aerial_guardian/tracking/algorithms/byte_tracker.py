@@ -317,16 +317,60 @@ class BYTETracker:
 
     @staticmethod
     def iou_distance(tracks, detections):
-        """Cost matrix = 1 - IoU."""
+        """Vectorized cost matrix = 1 - IoU."""
         if len(tracks) == 0 or len(detections) == 0:
             return np.empty((len(tracks), len(detections)), dtype=np.float32)
-        
-        cost_matrix = np.ones((len(tracks), len(detections)), dtype=np.float32)
-        for i, track in enumerate(tracks):
-            bbox_t = track.bbox
-            for j, det in enumerate(detections):
-                cost_matrix[i, j] = 1.0 - BYTETracker.iou(bbox_t, det.bbox)
-        return cost_matrix
+
+        # Extract bboxes as NumPy arrays
+        bboxes_t = np.array([t.bbox for t in tracks], dtype=np.float32)      # [M, 4] (center format)
+        bboxes_d = np.array([d.bbox for d in detections], dtype=np.float32)  # [N, 4] (center format)
+
+        # Convert [x_center, y_center, w, h] to [x_min, y_min, x_max, y_max]
+        xt, yt, wt, ht = bboxes_t[:, 0], bboxes_t[:, 1], bboxes_t[:, 2], bboxes_t[:, 3]
+        t_min_x = xt - wt / 2
+        t_min_y = yt - ht / 2
+        t_max_x = xt + wt / 2
+        t_max_y = yt + ht / 2
+
+        xd, yd, wd, hd = bboxes_d[:, 0], bboxes_d[:, 1], bboxes_d[:, 2], bboxes_d[:, 3]
+        d_min_x = xd - wd / 2
+        d_min_y = yd - hd / 2
+        d_max_x = xd + wd / 2
+        d_max_y = yd + hd / 2
+
+        # Reshape to broadcast: M tracks to [M, 1], N detections to [1, N]
+        t_min_x = t_min_x[:, np.newaxis]
+        t_min_y = t_min_y[:, np.newaxis]
+        t_max_x = t_max_x[:, np.newaxis]
+        t_max_y = t_max_y[:, np.newaxis]
+
+        d_min_x = d_min_x[np.newaxis, :]
+        d_min_y = d_min_y[np.newaxis, :]
+        d_max_x = d_max_x[np.newaxis, :]
+        d_max_y = d_max_y[np.newaxis, :]
+
+        # Intersection bounds [M, N]
+        inter_x1 = np.maximum(t_min_x, d_min_x)
+        inter_y1 = np.maximum(t_min_y, d_min_y)
+        inter_x2 = np.minimum(t_max_x, d_max_x)
+        inter_y2 = np.minimum(t_max_y, d_max_y)
+
+        # Intersection width & height
+        inter_w = np.maximum(0.0, inter_x2 - inter_x1)
+        inter_h = np.maximum(0.0, inter_y2 - inter_y1)
+        inter_area = inter_w * inter_h  # [M, N]
+
+        # Union areas
+        area_t = (wt * ht)[:, np.newaxis]  # [M, 1]
+        area_d = (wd * hd)[np.newaxis, :]  # [1, N]
+        union_area = area_t + area_d - inter_area  # [M, N]
+
+        # Avoid divide by zero
+        iou_matrix = np.zeros_like(union_area)
+        non_zero = union_area > 1e-6
+        iou_matrix[non_zero] = inter_area[non_zero] / union_area[non_zero]
+
+        return 1.0 - iou_matrix
 
     def linear_assignment(self, cost_matrix, thresh):
         """Hungarian linear sum assignment matching."""
