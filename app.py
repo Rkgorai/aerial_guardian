@@ -660,8 +660,7 @@ def run_pipeline(
 
     # ── Step 4: stream inference frames ───────────────────────────────
     try:
-        frame_idx = 0
-        for frame, fps, detection_count, track_count in infer_video(
+        for frame, fps, detection_count, track_count, curr_frame_idx, total_frames in infer_video(
             model_path,
             source,
             output_path=out_video_path,
@@ -675,15 +674,20 @@ def run_pipeline(
                 yield "⏹️  **Stopped** — tracking was cancelled by user.", frame, *metrics(0.0, 0, 0), *reset_outputs
                 return
             
+            if total_frames > 0:
+                pct = (curr_frame_idx / total_frames) * 100
+                status_text = f"🟢  Tracking in progress… [Frame {curr_frame_idx}/{total_frames} — {pct:.1f}%]"
+            else:
+                status_text = f"🟢  Tracking in progress… [Frame {curr_frame_idx} (Live stream)]"
+            
             # Throttle telemetry checks to every 10 frames to maximize inference FPS
-            frame_idx += 1
-            if frame_idx % 10 == 0:
+            if curr_frame_idx % 10 == 0:
                 cpu_val = cpu()
                 ram_val = ram()
                 if device == "cuda":
                     gpu_load_val, gpu_vram_val = get_gpu_telemetry()
                 
-            yield "🟢  Tracking in progress…", frame, *metrics(fps, detection_count, track_count), *reset_outputs
+            yield status_text, frame, *metrics(fps, detection_count, track_count), *reset_outputs
         
         # When successfully finished, expose the download file and replay video!
         yield "🏁  **Done!** Tracking finished successfully.", None, *metrics(0.0, 0, 0), gr.update(visible=True, value=out_video_path), gr.update(visible=True, value=out_video_path)
@@ -823,8 +827,8 @@ def build_app():
                                 label="IoU Threshold (iou)",
                             )
                             tracker = gr.Dropdown(
-                                choices=["botsort.yaml", "bytetrack.yaml"],
-                                value="botsort.yaml",
+                                choices=["bytetrack.yaml", "botsort.yaml"],
+                                value="bytetrack.yaml",
                                 label="Tracker Config",
                                 interactive=True,
                             )
@@ -879,7 +883,7 @@ def build_app():
 
                 show_feed = gr.Checkbox(
                     label="Show live tracking feed",
-                    value=True,
+                    value=False,
                 )
 
                 output_image = gr.Image(
@@ -887,7 +891,7 @@ def build_app():
                     interactive=False,
                     height=520,
                     elem_classes=["feed-area"],
-                    visible=True,
+                    visible=False,
                 )
 
                 # New download and replay components!

@@ -208,8 +208,9 @@ def infer_video(
     import cv2
     import time
     from aerial_guardian.tracking.pipeline import AerialGuardianPipeline
+    from aerial_guardian.tracking.video_writer import get_video_writer
     
-    # Initialize the custom pipeline
+    # Initialize the custom pipeline (defaults to custom tracker)
     pipeline = AerialGuardianPipeline(
         model_path=model_path,
         conf_thresh=conf,
@@ -217,6 +218,8 @@ def infer_video(
         img_size=imgsz,
         tracker_cfg=tracker,
         device=device,
+        # app.py currently doesn't pass tracker_type, so it defaults to "custom"
+        # but we use pipeline.tracker_type to dynamically support it if added later
     )
     
     cap = cv2.VideoCapture(source)
@@ -224,6 +227,7 @@ def infer_video(
         raise ValueError(f"Cannot open video source: {source}")
         
     fps_cap = cap.get(cv2.CAP_PROP_FPS)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     import numpy as np
     if fps_cap <= 0 or np.isnan(fps_cap):
         fps_cap = 25.0
@@ -234,32 +238,51 @@ def infer_video(
     # Ensure parent output directory exists
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     
-    # Initialize VideoWriter (try standard software mp4v first, fallback to XVID)
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(output_path, fourcc, fps_cap, (width, height))
-    if not out.isOpened():
-        # Fallback to XVID (.avi format) if mp4v fails
-        output_path_alt = str(Path(output_path).with_suffix(".avi"))
-        fourcc = cv2.VideoWriter_fourcc(*"XVID")
-        out = cv2.VideoWriter(output_path_alt, fourcc, fps_cap, (width, height))
-        if out.isOpened():
-            output_path = output_path_alt
+    # Initialize VideoWriter using our robust abstraction
+    # Use "ffmpeg" encoder if CUDA is available, otherwise "opencv"
+    # This avoids Kaggle OpenCV v4l2m2m hardware h264 bugs
+    encoder = "ffmpeg" if device == "cuda" else "opencv"
+    try:
+        out = get_video_writer(output_path, fps_cap, (width, height), encoder=encoder)
+    except Exception as e:
+        print(f"Failed to init {encoder} writer, falling back to opencv: {e}")
+        out = get_video_writer(output_path, fps_cap, (width, height), encoder="opencv")
         
     processing_times = []
     
+    frame_idx = 0
     try:
         while True:
             ret, frame = cap.read()
             if not ret:
                 break
                 
+            frame_idx += 1
             t_start = time.time()
             
-            # 1. Run detection
-            detections = pipeline.detect(frame)
-            
-            # 2. Run custom tracker
-            tracks = pipeline.tracker.update(detections, frame)
+            # 1 & 2. Run detection and tracking
+            if pipeline.tracker_type == "custom":
+                detections = pipeline.detect(frame)
+                tracks = pipeline.tracker.update(detections, frame)
+            else:
+                results = pipeline.model.track(
+                    frame,
+                    persist=True,
+                    tracker=pipeline.tracker_cfg,
+                    conf=pipeline.conf_thresh,
+                    iou=pipeline.iou_thresh,
+                    imgsz=pipeline.img_size,
+                    verbose=False,
+                    device=pipeline.device,
+                )
+                tracks = []
+                if results[0].boxes.id is not None:
+                    boxes = results[0].boxes.xywh.cpu().numpy()
+                    track_ids = results[0].boxes.id.int().cpu().numpy()
+                    confs = results[0].boxes.conf.cpu().numpy()
+                    for box, track_id, det_conf in zip(boxes, track_ids, confs):
+                        x, y, w, h = box
+                        tracks.append([x, y, w, h, track_id, det_conf])
             
             # 3. Calculate sliding average active inference FPS
             t_end = time.time()
@@ -274,8 +297,7 @@ def infer_video(
             output_frame = pipeline.visualize(frame, tracks, fps)
             
             # Write full-resolution annotated BGR frame to output video file
-            if out.isOpened():
-                out.write(output_frame)
+            out.write(output_frame)
                 
             # Downsample preview frame to eliminate websocket transmission bottlenecks
             h, w = output_frame.shape[:2]
@@ -288,15 +310,14 @@ def infer_video(
             frame_rgb = output_frame[..., ::-1]  # BGR to RGB for Gradio
             
             # Count detections & unique tracks
-            detection_count = len(detections)
+            detection_count = len(detections) if pipeline.tracker_type == "custom" else len(tracks)
             track_count = len(tracks)
             
-            yield frame_rgb, fps, detection_count, track_count
+            yield frame_rgb, fps, detection_count, track_count, frame_idx, total_frames
             
     finally:
         cap.release()
-        if out is not None:
-            out.release()
+        out.release()
 
 
 # ---------------------------------------------------------------------------
