@@ -73,7 +73,9 @@ class HSVColorHistogramExtractor:
 class PyTorchReIDExtractor:
     """Appearance feature extractor using a PyTorch CNN."""
 
-    def __init__(self, model_name="resnet18", device="cpu"):
+    def __init__(self, model_name="resnet18", device=None):
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)
         self.model_name = model_name
         self.model = None
@@ -140,7 +142,9 @@ class PyTorchReIDExtractor:
 class ReIDManager:
     """Unified appearance feature extractor. Handles PyTorch inference and HSV histogram fallbacks."""
 
-    def __init__(self, model_name="resnet18", device="cpu"):
+    def __init__(self, model_name="resnet18", device=None):
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = device
         self.pytorch_extractor = PyTorchReIDExtractor(model_name=model_name, device=device)
         self.hsv_extractor = HSVColorHistogramExtractor()

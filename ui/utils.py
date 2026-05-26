@@ -234,12 +234,16 @@ def infer_video(
     # Ensure parent output directory exists
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     
-    # Initialize VideoWriter (try H.264 first, fallback to standard mp4v)
-    fourcc = cv2.VideoWriter_fourcc(*"avc1")
+    # Initialize VideoWriter (try standard software mp4v first, fallback to XVID)
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(output_path, fourcc, fps_cap, (width, height))
     if not out.isOpened():
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        out = cv2.VideoWriter(output_path, fourcc, fps_cap, (width, height))
+        # Fallback to XVID (.avi format) if mp4v fails
+        output_path_alt = str(Path(output_path).with_suffix(".avi"))
+        fourcc = cv2.VideoWriter_fourcc(*"XVID")
+        out = cv2.VideoWriter(output_path_alt, fourcc, fps_cap, (width, height))
+        if out.isOpened():
+            output_path = output_path_alt
         
     processing_times = []
     

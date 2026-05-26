@@ -184,7 +184,7 @@ def main():
     # Load model
     print(f"Loading PyTorch model weights...")
     try:
-        model = YOLO(str(model_path))
+        model = YOLO(str(model_path), task="detect")
     except Exception as e:
         print(f"Failed to load model: {e}", file=sys.stderr)
         sys.exit(1)

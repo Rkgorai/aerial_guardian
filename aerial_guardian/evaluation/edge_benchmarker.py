@@ -202,10 +202,20 @@ def benchmark_model(model_path, imgsz, num_frames=100):
 
     # Load model and run warmup via Ultralytics (automatically routes based on extension)
     try:
-        model = YOLO(str(model_path))
-        print("Running warmup frames...")
+        model = YOLO(str(model_path), task="detect")
+        
+        # Determine device dynamically: default to GPU if available for standard models
+        device = None
+        if Path(model_path).suffix in [".pt", ".onnx", ".engine"]:
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            
+        print(f"Running warmup frames (device: {device or 'auto'})...")
         for _ in range(5):
-            _ = model(img, imgsz=imgsz, verbose=False)
+            if device:
+                _ = model(img, imgsz=imgsz, verbose=False, device=device)
+            else:
+                _ = model(img, imgsz=imgsz, verbose=False)
     except Exception as e:
         print(f"Error loading or warming up model: {e}", file=sys.stderr)
         return None
@@ -216,7 +226,10 @@ def benchmark_model(model_path, imgsz, num_frames=100):
     
     for _ in range(num_frames):
         start = time.perf_counter()
-        _ = model(img, imgsz=imgsz, verbose=False)
+        if device:
+            _ = model(img, imgsz=imgsz, verbose=False, device=device)
+        else:
+            _ = model(img, imgsz=imgsz, verbose=False)
         end = time.perf_counter()
         latencies.append(end - start)
 

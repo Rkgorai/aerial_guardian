@@ -9,10 +9,16 @@ from pathlib import Path
 import cv2
 import numpy as np
 from ultralytics import YOLO
+import torch
 
 from aerial_guardian.tracking.algorithms import create_tracker
 
 COLORS = np.random.randint(0, 255, size=(1000, 3), dtype=np.uint8)
+
+# Automatically choose GPU if available
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+print(f"Using device: {device}")
 
 
 class AerialGuardianPipeline:
@@ -25,9 +31,10 @@ class AerialGuardianPipeline:
         iou_thresh=0.5,
         img_size=640,
         tracker_cfg="bytetrack.yaml",
-        device="cpu",
+        device=device,
     ):
-        self.model = YOLO(model_path)
+        self.model = YOLO(model_path, task="detect")
+
         self.conf_thresh = conf_thresh
         self.iou_thresh = iou_thresh
         self.img_size = img_size
@@ -61,8 +68,9 @@ class AerialGuardianPipeline:
         return detections
 
     def visualize(self, frame, tracks, fps):
-        """Draw bounding boxes, IDs, and trajectory tails."""
-        output = frame.copy()
+        """Draw bounding boxes, IDs, and trajectory tails directly in-place."""
+        # Draw directly on the frame in-place to avoid expensive deep copies
+        output = frame
 
         for track in tracks:
             x, y, w, h, track_id, conf = track
@@ -118,7 +126,7 @@ class AerialGuardianPipeline:
 
         return output
 
-    def process_video(self, input_path, output_path):
+    def process_video(self, input_path, output_path=None):
         """Process entire video through the pipeline."""
         cap = cv2.VideoCapture(input_path)
         if not cap.isOpened():
@@ -131,33 +139,63 @@ class AerialGuardianPipeline:
 
         print(f"Video: {width}x{height} @ {fps:.1f} FPS, {total_frames} frames")
 
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        out = None
+        if output_path:
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
         frame_count = 0
+        
+        # High-precision profiling variables
+        total_read_time = 0.0
+        total_detect_time = 0.0
+        total_tracker_time = 0.0
+        total_visualize_time = 0.0
+        total_write_time = 0.0
+        
         start_time = time.time()
 
         while True:
+            t0 = time.perf_counter()
             ret, frame = cap.read()
+            t1 = time.perf_counter()
             if not ret:
                 break
+            total_read_time += (t1 - t0)
 
             frame_count += 1
 
+            t_d0 = time.perf_counter()
             detections = self.detect(frame)
+            t_d1 = time.perf_counter()
+            total_detect_time += (t_d1 - t_d0)
+
+            t_tr0 = time.perf_counter()
             tracks = self.tracker.update(detections, frame)
+            t_tr1 = time.perf_counter()
+            total_tracker_time += (t_tr1 - t_tr0)
 
             elapsed = time.time() - start_time
             current_fps = frame_count / elapsed if elapsed > 0 else 0
 
-            output_frame = self.visualize(frame, tracks, current_fps)
-            out.write(output_frame)
+            if out:
+                t_v0 = time.perf_counter()
+                output_frame = self.visualize(frame, tracks, current_fps)
+                t_v1 = time.perf_counter()
+                total_visualize_time += (t_v1 - t_v0)
+
+                t_w0 = time.perf_counter()
+                out.write(output_frame)
+                t_w1 = time.perf_counter()
+                total_write_time += (t_w1 - t_w0)
 
             if frame_count % 50 == 0:
                 print(f"Processed {frame_count}/{total_frames} frames ({current_fps:.1f} FPS)")
 
         cap.release()
-        out.release()
+        if out:
+            out.release()
 
         total_time = time.time() - start_time
         avg_fps = frame_count / total_time
@@ -166,7 +204,20 @@ class AerialGuardianPipeline:
         print(f"Total frames: {frame_count}")
         print(f"Total time: {total_time:.2f}s")
         print(f"Average FPS: {avg_fps:.2f}")
-        print(f"Output saved to: {output_path}")
+        if output_path:
+            print(f"Output saved to: {output_path}")
+            
+        # Print breakdown results
+        print("\n" + "=" * 50)
+        print(" pipeline latency breakdown ".upper().center(50, "="))
+        print("=" * 50)
+        print(f"1. Video Read Time:   {total_read_time:.3f}s (Avg: {total_read_time*1000/frame_count:.1f}ms/frame)")
+        print(f"2. Model Detect Time: {total_detect_time:.3f}s (Avg: {total_detect_time*1000/frame_count:.1f}ms/frame)")
+        print(f"3. Tracker Update:    {total_tracker_time:.3f}s (Avg: {total_tracker_time*1000/frame_count:.1f}ms/frame)")
+        if output_path:
+            print(f"4. Visualization:     {total_visualize_time:.3f}s (Avg: {total_visualize_time*1000/frame_count:.1f}ms/frame)")
+            print(f"5. Video Write Time:  {total_write_time:.3f}s (Avg: {total_write_time*1000/frame_count:.1f}ms/frame)")
+        print("=" * 50 + "\n")
 
         return avg_fps
 
@@ -175,7 +226,7 @@ def main():
     parser = argparse.ArgumentParser(description="Aerial Guardian Pipeline")
     parser.add_argument("--model", type=str, required=True, help="Path to YOLO model")
     parser.add_argument("--input", type=str, required=True, help="Input video path")
-    parser.add_argument("--output", type=str, default="output.mp4", help="Output video path")
+    parser.add_argument("--output", type=str, default="output.mp4", help="Output video path (set to '' or 'none' to disable visualization & writing for raw tracking speed)")
     parser.add_argument("--conf", type=float, default=0.15, help="Confidence threshold")
     parser.add_argument("--iou", type=float, default=0.5, help="IoU threshold")
     parser.add_argument("--imgsz", type=int, default=640, help="Image size")
@@ -190,7 +241,11 @@ def main():
         tracker_cfg=args.tracker,
     )
 
-    pipeline.process_video(args.input, args.output)
+    output_path = args.output
+    if not output_path or output_path.strip().lower() in ["none", ""]:
+        output_path = None
+
+    pipeline.process_video(args.input, output_path)
 
 
 if __name__ == "__main__":

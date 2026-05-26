@@ -40,7 +40,10 @@ def validate_model(model_path, data_yaml, imgsz, conf, iou):
     print(f"Validating: {model_path}")
     print(f"{'='*60}")
 
-    model = YOLO(model_path)
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    model = YOLO(model_path, task="detect")
 
     results = model.val(
         data=data_yaml,
@@ -49,6 +52,7 @@ def validate_model(model_path, data_yaml, imgsz, conf, iou):
         iou=iou,
         verbose=True,
         split="val",
+        device=device,
     )
 
     metrics = {
@@ -76,7 +80,10 @@ def benchmark_fps(model_path, imgsz, num_frames=FPS_FRAMES):
     print(f"FPS Benchmark: {model_path}")
     print(f"{'='*60}")
 
-    model = YOLO(model_path)
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    model = YOLO(model_path, task="detect")
 
     # Find a sample image for benchmarking
     images_dir = Path("yolo_dataset/images/val")
@@ -92,17 +99,17 @@ def benchmark_fps(model_path, imgsz, num_frames=FPS_FRAMES):
         print("Failed to load sample image!")
         return None
 
-    print(f"Benchmarking with {num_frames} frames...")
+    print(f"Benchmarking with {num_frames} frames (device: {device})...")
 
     # Warmup
     for _ in range(10):
-        model(img, imgsz=imgsz, verbose=False, conf=CONF_THRESHOLD)
+        model(img, imgsz=imgsz, verbose=False, conf=CONF_THRESHOLD, device=device)
 
     # Timed inference
     times = []
     for _ in range(num_frames):
         start = time.perf_counter()
-        model(img, imgsz=imgsz, verbose=False, conf=CONF_THRESHOLD)
+        model(img, imgsz=imgsz, verbose=False, conf=CONF_THRESHOLD, device=device)
         end = time.perf_counter()
         times.append(end - start)
 
