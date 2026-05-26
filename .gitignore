@@ -13,5 +13,6 @@ benchmark_results.json
 __pycache__/
 *.pyc
 .DS_Store
-aerial_guardian/inference/
+
 aerial_guardian/evaluation/benchmark_results/
+
