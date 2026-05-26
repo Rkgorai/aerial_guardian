@@ -54,6 +54,9 @@ def validate_model_fast(model_path, images, imgsz, conf):
     print(f"Validating: {model_path}")
     print(f"{'='*60}")
 
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
     model = YOLO(model_path)
 
     # Load ground truth labels for these images
@@ -72,7 +75,7 @@ def validate_model_fast(model_path, images, imgsz, conf):
             continue
 
         # Get predictions
-        results = model(img, imgsz=imgsz, conf=conf, verbose=False)
+        results = model(img, imgsz=imgsz, conf=conf, verbose=False, device=device)
         preds = results[0].boxes
 
         # Load ground truth
@@ -181,6 +184,9 @@ def benchmark_fps(model_path, imgsz, num_frames=FPS_FRAMES):
     print(f"FPS Benchmark: {model_path}")
     print(f"{'='*60}")
 
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
     model = YOLO(model_path)
 
     # Find a sample image for benchmarking
@@ -196,17 +202,17 @@ def benchmark_fps(model_path, imgsz, num_frames=FPS_FRAMES):
         print("Failed to load sample image!")
         return None
 
-    print(f"Benchmarking with {num_frames} frames...")
+    print(f"Benchmarking with {num_frames} frames (device: {device})...")
 
     # Warmup
     for _ in range(5):
-        model(img, imgsz=imgsz, verbose=False, conf=CONF_THRESHOLD)
+        model(img, imgsz=imgsz, verbose=False, conf=CONF_THRESHOLD, device=device)
 
     # Timed inference
     times = []
     for _ in range(num_frames):
         start = time.perf_counter()
-        model(img, imgsz=imgsz, verbose=False, conf=CONF_THRESHOLD)
+        model(img, imgsz=imgsz, verbose=False, conf=CONF_THRESHOLD, device=device)
         end = time.perf_counter()
         times.append(end - start)
 

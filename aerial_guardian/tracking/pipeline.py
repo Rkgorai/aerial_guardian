@@ -9,10 +9,16 @@ from pathlib import Path
 import cv2
 import numpy as np
 from ultralytics import YOLO
+import torch
 
 from aerial_guardian.tracking.algorithms import create_tracker
 
 COLORS = np.random.randint(0, 255, size=(1000, 3), dtype=np.uint8)
+
+# Automatically choose GPU if available
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+print(f"Using device: {device}")
 
 
 class AerialGuardianPipeline:
@@ -25,9 +31,10 @@ class AerialGuardianPipeline:
         iou_thresh=0.5,
         img_size=640,
         tracker_cfg="bytetrack.yaml",
-        device="cpu",
+        device=device,
     ):
         self.model = YOLO(model_path)
+
         self.conf_thresh = conf_thresh
         self.iou_thresh = iou_thresh
         self.img_size = img_size

@@ -12,7 +12,7 @@ TRACKER_MAP = {
 }
 
 
-def create_tracker(config_path, device="cpu"):
+def create_tracker(config_path, device=None):
     """Factory function to load tracking configurations and instantiate tracking algorithms.
     
     config_path: Path to tracker config (.yaml) or a standard name like 'bytetrack.yaml' or 'botsort.yaml'
@@ -20,6 +20,9 @@ def create_tracker(config_path, device="cpu"):
     
     Returns: Tracker instance.
     """
+    if device is None:
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
     path = Path(config_path)
     
     # If the user supplied a standard shortname (e.g., 'bytetrack.yaml'), look up in our cfg package folder
