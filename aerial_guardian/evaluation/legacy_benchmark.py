@@ -43,7 +43,7 @@ def validate_model(model_path, data_yaml, imgsz, conf, iou):
     import torch
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    model = YOLO(model_path)
+    model = YOLO(model_path, task="detect")
 
     results = model.val(
         data=data_yaml,
@@ -83,7 +83,7 @@ def benchmark_fps(model_path, imgsz, num_frames=FPS_FRAMES):
     import torch
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    model = YOLO(model_path)
+    model = YOLO(model_path, task="detect")
 
     # Find a sample image for benchmarking
     images_dir = Path("yolo_dataset/images/val")

@@ -57,7 +57,7 @@ def validate_model_fast(model_path, images, imgsz, conf):
     import torch
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    model = YOLO(model_path)
+    model = YOLO(model_path, task="detect")
 
     # Load ground truth labels for these images
     gt_boxes = []
@@ -187,7 +187,7 @@ def benchmark_fps(model_path, imgsz, num_frames=FPS_FRAMES):
     import torch
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    model = YOLO(model_path)
+    model = YOLO(model_path, task="detect")
 
     # Find a sample image for benchmarking
     images_dir = Path("yolo_dataset/images/val")

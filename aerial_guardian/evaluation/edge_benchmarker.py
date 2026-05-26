@@ -202,7 +202,7 @@ def benchmark_model(model_path, imgsz, num_frames=100):
 
     # Load model and run warmup via Ultralytics (automatically routes based on extension)
     try:
-        model = YOLO(str(model_path))
+        model = YOLO(str(model_path), task="detect")
         
         # Determine device dynamically: default to GPU if available for standard models
         device = None

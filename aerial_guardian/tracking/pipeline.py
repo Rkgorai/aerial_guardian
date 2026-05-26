@@ -33,7 +33,7 @@ class AerialGuardianPipeline:
         tracker_cfg="bytetrack.yaml",
         device=device,
     ):
-        self.model = YOLO(model_path)
+        self.model = YOLO(model_path, task="detect")
 
         self.conf_thresh = conf_thresh
         self.iou_thresh = iou_thresh
@@ -68,8 +68,9 @@ class AerialGuardianPipeline:
         return detections
 
     def visualize(self, frame, tracks, fps):
-        """Draw bounding boxes, IDs, and trajectory tails."""
-        output = frame.copy()
+        """Draw bounding boxes, IDs, and trajectory tails directly in-place."""
+        # Draw directly on the frame in-place to avoid expensive deep copies
+        output = frame
 
         for track in tracks:
             x, y, w, h, track_id, conf = track
