@@ -12,6 +12,7 @@ from ultralytics import YOLO
 import torch
 
 from aerial_guardian.tracking.algorithms import create_tracker
+from aerial_guardian.tracking.video_writer import get_video_writer, NullVideoWriter
 
 COLORS = np.random.randint(0, 255, size=(1000, 3), dtype=np.uint8)
 
@@ -32,6 +33,7 @@ class AerialGuardianPipeline:
         img_size=640,
         tracker_cfg="bytetrack.yaml",
         device=device,
+        tracker_type="custom",
     ):
         self.model = YOLO(model_path, task="detect")
 
@@ -39,9 +41,12 @@ class AerialGuardianPipeline:
         self.iou_thresh = iou_thresh
         self.img_size = img_size
         self.device = device
+        self.tracker_type = tracker_type
+        self.tracker_cfg = tracker_cfg
         
         # Dynamically create tracker based on config name/path (e.g. 'bytetrack.yaml' or 'botsort.yaml')
-        self.tracker = create_tracker(tracker_cfg, device=device)
+        if self.tracker_type == "custom":
+            self.tracker = create_tracker(tracker_cfg, device=device)
         self.track_history = {}
 
     def detect(self, frame):
@@ -126,8 +131,18 @@ class AerialGuardianPipeline:
 
         return output
 
-    def process_video(self, input_path, output_path=None):
-        """Process entire video through the pipeline."""
+    def process_video(self, input_path, output_path=None, encoder="opencv"):
+        """Process entire video through the pipeline.
+
+        Parameters
+        ----------
+        input_path: str
+            Path to input video.
+        output_path: str | None
+            Destination file path; if None or empty, output is disabled.
+        encoder: str
+            Video encoder to use ("opencv", "ffmpeg", or "none").
+        """
         cap = cv2.VideoCapture(input_path)
         if not cap.isOpened():
             raise ValueError(f"Cannot open video: {input_path}")
@@ -139,11 +154,8 @@ class AerialGuardianPipeline:
 
         print(f"Video: {width}x{height} @ {fps:.1f} FPS, {total_frames} frames")
 
-        out = None
-        if output_path:
-            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        # Initialize appropriate video writer (or Null writer for benchmark)
+        writer = get_video_writer(output_path, fps, (width, height), encoder=encoder)
 
         frame_count = 0
         
@@ -166,27 +178,56 @@ class AerialGuardianPipeline:
 
             frame_count += 1
 
-            t_d0 = time.perf_counter()
-            detections = self.detect(frame)
-            t_d1 = time.perf_counter()
-            total_detect_time += (t_d1 - t_d0)
+            if self.tracker_type == "custom":
+                t_d0 = time.perf_counter()
+                detections = self.detect(frame)
+                t_d1 = time.perf_counter()
+                total_detect_time += (t_d1 - t_d0)
 
-            t_tr0 = time.perf_counter()
-            tracks = self.tracker.update(detections, frame)
-            t_tr1 = time.perf_counter()
-            total_tracker_time += (t_tr1 - t_tr0)
+                t_tr0 = time.perf_counter()
+                tracks = self.tracker.update(detections, frame)
+                t_tr1 = time.perf_counter()
+                total_tracker_time += (t_tr1 - t_tr0)
+            else:
+                t_d0 = time.perf_counter()
+                # Ultralytics built-in tracker handles both detection and tracking
+                results = self.model.track(
+                    frame,
+                    persist=True,
+                    tracker=self.tracker_cfg,
+                    conf=self.conf_thresh,
+                    iou=self.iou_thresh,
+                    imgsz=self.img_size,
+                    verbose=False,
+                    device=self.device,
+                )
+                t_d1 = time.perf_counter()
+                total_detect_time += (t_d1 - t_d0)
+
+                t_tr0 = time.perf_counter()
+                tracks = []
+                if results[0].boxes.id is not None:
+                    boxes = results[0].boxes.xywh.cpu().numpy()
+                    track_ids = results[0].boxes.id.int().cpu().numpy()
+                    confs = results[0].boxes.conf.cpu().numpy()
+                    for box, track_id, conf in zip(boxes, track_ids, confs):
+                        x, y, w, h = box
+                        tracks.append([x, y, w, h, track_id, conf])
+                t_tr1 = time.perf_counter()
+                total_tracker_time += (t_tr1 - t_tr0)
 
             elapsed = time.time() - start_time
             current_fps = frame_count / elapsed if elapsed > 0 else 0
 
-            if out:
+            # Visualization and writing are optional based on writer type
+            if not isinstance(writer, NullVideoWriter):
                 t_v0 = time.perf_counter()
                 output_frame = self.visualize(frame, tracks, current_fps)
                 t_v1 = time.perf_counter()
                 total_visualize_time += (t_v1 - t_v0)
 
                 t_w0 = time.perf_counter()
-                out.write(output_frame)
+                writer.write(output_frame)
                 t_w1 = time.perf_counter()
                 total_write_time += (t_w1 - t_w0)
 
@@ -194,8 +235,8 @@ class AerialGuardianPipeline:
                 print(f"Processed {frame_count}/{total_frames} frames ({current_fps:.1f} FPS)")
 
         cap.release()
-        if out:
-            out.release()
+        # Release the writer (noop for NullVideoWriter)
+        writer.release()
 
         total_time = time.time() - start_time
         avg_fps = frame_count / total_time
@@ -214,9 +255,12 @@ class AerialGuardianPipeline:
         print(f"1. Video Read Time:   {total_read_time:.3f}s (Avg: {total_read_time*1000/frame_count:.1f}ms/frame)")
         print(f"2. Model Detect Time: {total_detect_time:.3f}s (Avg: {total_detect_time*1000/frame_count:.1f}ms/frame)")
         print(f"3. Tracker Update:    {total_tracker_time:.3f}s (Avg: {total_tracker_time*1000/frame_count:.1f}ms/frame)")
-        if output_path:
+        if not isinstance(writer, NullVideoWriter):
             print(f"4. Visualization:     {total_visualize_time:.3f}s (Avg: {total_visualize_time*1000/frame_count:.1f}ms/frame)")
             print(f"5. Video Write Time:  {total_write_time:.3f}s (Avg: {total_write_time*1000/frame_count:.1f}ms/frame)")
+        else:
+            print("4. Visualization:     skipped (benchmark mode)")
+            print("5. Video Write Time:  skipped (benchmark mode)")
         print("=" * 50 + "\n")
 
         return avg_fps
@@ -227,10 +271,12 @@ def main():
     parser.add_argument("--model", type=str, required=True, help="Path to YOLO model")
     parser.add_argument("--input", type=str, required=True, help="Input video path")
     parser.add_argument("--output", type=str, default="output.mp4", help="Output video path (set to '' or 'none' to disable visualization & writing for raw tracking speed)")
+    parser.add_argument("--video_encoder", type=str, default="opencv", choices=["opencv", "ffmpeg", "none"], help="Video encoder to use: opencv (default), ffmpeg (NVENC), or none (benchmark mode)")
     parser.add_argument("--conf", type=float, default=0.15, help="Confidence threshold")
     parser.add_argument("--iou", type=float, default=0.5, help="IoU threshold")
     parser.add_argument("--imgsz", type=int, default=640, help="Image size")
     parser.add_argument("--tracker", type=str, default="bytetrack.yaml", help="Tracker config name or path")
+    parser.add_argument("--tracker_type", type=str, default="custom", choices=["custom", "ultralytics"], help="Type of tracker to use: 'custom' or 'ultralytics'")
     args = parser.parse_args()
 
     pipeline = AerialGuardianPipeline(
@@ -239,13 +285,14 @@ def main():
         iou_thresh=args.iou,
         img_size=args.imgsz,
         tracker_cfg=args.tracker,
+        tracker_type=args.tracker_type,
     )
 
     output_path = args.output
     if not output_path or output_path.strip().lower() in ["none", ""]:
         output_path = None
 
-    pipeline.process_video(args.input, output_path)
+    pipeline.process_video(args.input, output_path, encoder=args.video_encoder)
 
 
 if __name__ == "__main__":
