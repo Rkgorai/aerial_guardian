@@ -12,6 +12,7 @@ Usage:
 import threading
 import psutil
 import torch
+import time
 import gradio as gr
 from pathlib import Path
 
@@ -501,7 +502,7 @@ def on_start_click():
 
 
 def on_stop_click():
-    """Signal stop and swap buttons back: hide Stop, show Start, reset metrics."""
+    """Signal stop and swap buttons back: hide Stop, show Start, reset metrics, hide video outputs."""
     _stop_event.set()
     resets = get_metric_updates(0.0, 0, 0, 0.0, 0.0)
     return (
@@ -509,6 +510,8 @@ def on_stop_click():
         gr.update(visible=True),
         gr.update(visible=False),
         *resets,
+        gr.update(visible=False),
+        gr.update(visible=False),
     )
 
 
@@ -529,7 +532,7 @@ def run_pipeline(
     tracker,
 ):
     """
-    Main generator — yields (status_text, frame, fps_html, det_html, track_html, cpu_html, ram_html) tuples.
+    Main generator — yields (status_text, frame, fps_html, det_html, track_html, cpu_html, ram_html, download_update, replay_update) tuples.
     Because it's a generator, Gradio streams the outputs live.
     """
     _stop_event.clear()  # reset stop flag at the start of each run
@@ -538,25 +541,32 @@ def run_pipeline(
     ram = lambda: psutil.virtual_memory().percent
     fmt_key = label_to_key(format_label)
 
-    yield "⏳  Preparing…", None, *get_metric_updates(0.0, 0, 0, cpu(), ram())
+    # Helper function to reset file & video displays during processing
+    reset_outputs = (gr.update(visible=False), gr.update(visible=False))
+
+    yield "⏳  Preparing…", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
 
     # ── Step 1: resolve source ────────────────────────────────────────
     source = None
     if "Upload" in input_type and video_file:
         source = video_file
     elif "YouTube" in input_type and yt_url:
-        yield "⬇️  Downloading from YouTube…", None, *get_metric_updates(0.0, 0, 0, cpu(), ram())
+        yield "⬇️  Downloading from YouTube…", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
         try:
             source = download_youtube_video(yt_url.strip())
         except Exception as e:
-            yield f"❌  YouTube download failed: {e}", None, *get_metric_updates(0.0, 0, 0, cpu(), ram())
+            yield f"❌  YouTube download failed: {e}", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
             return
     elif "stream" in input_type.lower() and stream_url:
         source = stream_url.strip()
 
     if not source:
-        yield "❌  No input provided. Please upload a video, paste a link, or enter a stream URL above.", None, *get_metric_updates(0.0, 0, 0, cpu(), ram())
+        yield "❌  No input provided. Please upload a video, paste a link, or enter a stream URL above.", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
         return
+
+    # Create a unique output path using the input filename and a timestamp
+    source_stem = Path(source).stem if isinstance(source, str) else "stream"
+    out_video_path = f"output/tracked_{source_stem}_{int(time.time())}.mp4"
 
     # ── Step 2: ensure model exists ───────────────────────────────────
     actual_precision = precision if fmt_key != "pt" else "default"
@@ -564,28 +574,28 @@ def run_pipeline(
     if not is_model_present(fmt_key, actual_precision):
         base_model = "weights/best.pt"
         if not Path(base_model).exists():
-            yield "❌  Base model `weights/best.pt` not found. Cannot build the requested format.", None, *get_metric_updates(0.0, 0, 0, cpu(), ram())
+            yield "❌  Base model `weights/best.pt` not found. Cannot build the requested format.", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
             return
 
-        yield f"🔨  Building **{format_label}** ({precision}). This may take a while…", None, *get_metric_updates(0.0, 0, 0, cpu(), ram())
+        yield f"🔨  Building **{format_label}** ({precision}). This may take a while…", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
         half = precision == "fp16"
         int8 = precision == "int8"
         log_lines = []
         for line in trigger_model_optimizer(base_model, fmt_key, half=half, int8=int8):
             if _stop_event.is_set():
-                yield "⏹️  **Stopped** — model build was cancelled.", None, *get_metric_updates(0.0, 0, 0, cpu(), ram())
+                yield "⏹️  **Stopped** — model build was cancelled.", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
                 return
             log_lines.append(line)
             recent = "\n".join(log_lines[-6:])
-            yield f"🔨  Building model…\n```\n{recent}\n```", None, *get_metric_updates(0.0, 0, 0, cpu(), ram())
+            yield f"🔨  Building model…\n```\n{recent}\n```", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
 
     # ── Step 3: load model path ───────────────────────────────────────
     model_path = get_model_path(fmt_key, actual_precision)
     if not model_path:
-        yield "❌  Could not locate the model after building. Check the weights/ directory.", None, *get_metric_updates(0.0, 0, 0, cpu(), ram())
+        yield "❌  Could not locate the model after building. Check the weights/ directory.", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
         return
 
-    yield f"✅  Model loaded: `{Path(model_path).name}`. Starting tracking…", None, *get_metric_updates(0.0, 0, 0, cpu(), ram())
+    yield f"✅  Model loaded: `{Path(model_path).name}`. Starting tracking…", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
 
     # ── Step 4: stream inference frames ───────────────────────────────
     try:
@@ -595,6 +605,7 @@ def run_pipeline(
         for frame, fps, detection_count, track_count in infer_video(
             model_path,
             source,
+            output_path=out_video_path,
             imgsz=int(imgsz),
             conf=float(conf),
             iou=float(iou),
@@ -602,7 +613,7 @@ def run_pipeline(
             device=device,
         ):
             if _stop_event.is_set():
-                yield "⏹️  **Stopped** — tracking was cancelled by user.", frame, *get_metric_updates(0.0, 0, 0, cpu_val, ram_val)
+                yield "⏹️  **Stopped** — tracking was cancelled by user.", frame, *get_metric_updates(0.0, 0, 0, cpu_val, ram_val), *reset_outputs
                 return
             
             # Throttle telemetry checks to every 10 frames to maximize inference FPS
@@ -611,10 +622,12 @@ def run_pipeline(
                 cpu_val = cpu()
                 ram_val = ram()
                 
-            yield "🟢  Tracking in progress…", frame, *get_metric_updates(fps, detection_count, track_count, cpu_val, ram_val)
-        yield "🏁  **Done!** Tracking finished successfully.", None, *get_metric_updates(0.0, 0, 0, cpu_val, ram_val)
+            yield "🟢  Tracking in progress…", frame, *get_metric_updates(fps, detection_count, track_count, cpu_val, ram_val), *reset_outputs
+        
+        # When successfully finished, expose the download file and replay video!
+        yield "🏁  **Done!** Tracking finished successfully.", None, *get_metric_updates(0.0, 0, 0, cpu_val, ram_val), gr.update(visible=True, value=out_video_path), gr.update(visible=True, value=out_video_path)
     except Exception as e:
-        yield f"❌  Inference error: {e}", None, *get_metric_updates(0.0, 0, 0, cpu_val, ram_val)
+        yield f"❌  Inference error: {e}", None, *get_metric_updates(0.0, 0, 0, cpu_val, ram_val), *reset_outputs
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -810,6 +823,19 @@ def build_app():
                     visible=True,
                 )
 
+                # New download and replay components!
+                download_file = gr.File(
+                    label="📥 Download Tracked Video File",
+                    visible=False,
+                    interactive=False,
+                )
+                replay_video = gr.Video(
+                    label="▶️ Replay Tracked Video",
+                    visible=False,
+                    interactive=False,
+                    autoplay=False,
+                )
+
         # ══════════════ EVENT WIRING ══════════════════════════════════
         input_type.change(
             fn=on_input_type_change,
@@ -843,7 +869,17 @@ def build_app():
                 iou,
                 tracker,
             ],
-            outputs=[status_bar, output_image, fps_card, det_card, track_card, cpu_card, ram_card],
+            outputs=[
+                status_bar,
+                output_image,
+                fps_card,
+                det_card,
+                track_card,
+                cpu_card,
+                ram_card,
+                download_file,
+                replay_video,
+            ],
         ).then(
             # When pipeline finishes (naturally or error), restore Start button
             fn=lambda: (gr.update(visible=True), gr.update(visible=False)),
@@ -851,11 +887,22 @@ def build_app():
             outputs=[launch_btn, stop_btn],
         )
 
-        # Stop click: signal stop + swap buttons back + reset metrics
+        # Stop click: signal stop + swap buttons back + reset metrics + hide download/replay
         stop_btn.click(
             fn=on_stop_click,
             inputs=[],
-            outputs=[status_bar, launch_btn, stop_btn, fps_card, det_card, track_card, cpu_card, ram_card],
+            outputs=[
+                status_bar,
+                launch_btn,
+                stop_btn,
+                fps_card,
+                det_card,
+                track_card,
+                cpu_card,
+                ram_card,
+                download_file,
+                replay_video,
+            ],
             cancels=[run_event],
         )
 

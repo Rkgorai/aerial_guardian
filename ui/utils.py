@@ -193,6 +193,7 @@ def trigger_model_optimizer(model_path: str, target_format: str, half=False, int
 def infer_video(
     model_path: str,
     source: str,
+    output_path: str,
     imgsz: int = 640,
     conf: float = 0.25,
     iou: float = 0.7,
@@ -202,6 +203,7 @@ def infer_video(
     """
     Generator that yields (frame, fps, detection_count, track_count) using
     the custom AerialGuardianPipeline from the project's tracking package.
+    Saves the full-resolution annotated video to output_path.
     """
     import cv2
     import time
@@ -220,6 +222,24 @@ def infer_video(
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
         raise ValueError(f"Cannot open video source: {source}")
+        
+    fps_cap = cap.get(cv2.CAP_PROP_FPS)
+    import numpy as np
+    if fps_cap <= 0 or np.isnan(fps_cap):
+        fps_cap = 25.0
+        
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    
+    # Ensure parent output directory exists
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    
+    # Initialize VideoWriter (try H.264 first, fallback to standard mp4v)
+    fourcc = cv2.VideoWriter_fourcc(*"avc1")
+    out = cv2.VideoWriter(output_path, fourcc, fps_cap, (width, height))
+    if not out.isOpened():
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        out = cv2.VideoWriter(output_path, fourcc, fps_cap, (width, height))
         
     processing_times = []
     
@@ -249,6 +269,10 @@ def infer_video(
             # 4. Generate visual frame with custom visualize helper using correct FPS
             output_frame = pipeline.visualize(frame, tracks, fps)
             
+            # Write full-resolution annotated BGR frame to output video file
+            if out.isOpened():
+                out.write(output_frame)
+                
             # Downsample preview frame to eliminate websocket transmission bottlenecks
             h, w = output_frame.shape[:2]
             max_preview_width = 800
@@ -267,6 +291,8 @@ def infer_video(
             
     finally:
         cap.release()
+        if out is not None:
+            out.release()
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +305,7 @@ def download_youtube_video(url: str, output_path: str = "downloads/youtube_video
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
     ydl_opts = {
-        "format": "best[ext=mp4][height<=720]/best[height<=720]/best[ext=mp4]/best",
+        "format": "best[ext=mp4][vcodec^=avc1][height<=720]/best[ext=mp4][vcodec^=avc1]/best[ext=mp4]/best",
         "outtmpl": output_path,
         "quiet": True,
         "no_warnings": True,
