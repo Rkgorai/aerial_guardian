@@ -25,14 +25,16 @@ class AerialGuardianPipeline:
         iou_thresh=0.5,
         img_size=640,
         tracker_cfg="bytetrack.yaml",
+        device="cpu",
     ):
         self.model = YOLO(model_path)
         self.conf_thresh = conf_thresh
         self.iou_thresh = iou_thresh
         self.img_size = img_size
+        self.device = device
         
         # Dynamically create tracker based on config name/path (e.g. 'bytetrack.yaml' or 'botsort.yaml')
-        self.tracker = create_tracker(tracker_cfg, device="cpu")
+        self.tracker = create_tracker(tracker_cfg, device=device)
         self.track_history = {}
 
     def detect(self, frame):
@@ -43,6 +45,7 @@ class AerialGuardianPipeline:
             conf=self.conf_thresh,
             iou=self.iou_thresh,
             verbose=False,
+            device=self.device,
         )
 
         detections = []
