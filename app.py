@@ -443,6 +443,26 @@ footer { display: none !important; }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# GPU Telemetry Helper
+# ═══════════════════════════════════════════════════════════════════════════
+def get_gpu_telemetry():
+    """Query nvidia-smi programmatically for GPU load % and memory usage %."""
+    try:
+        import subprocess
+        # Query utilization and memory for the first GPU
+        cmd = "nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total --format=csv,noheader,nounits"
+        output = subprocess.check_output(cmd, shell=True, text=True, stderr=subprocess.DEVNULL).strip()
+        parts = [p.strip() for p in output.split(",")]
+        if len(parts) >= 3:
+            gpu_load = float(parts[0])
+            gpu_mem = (float(parts[1]) / float(parts[2])) * 100 if float(parts[2]) > 0 else 0.0
+            return gpu_load, gpu_mem
+    except Exception:
+        pass
+    return 0.0, 0.0
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Metrics HTML builders
 # ═══════════════════════════════════════════════════════════════════════════
 def make_metric_card(icon, label, value, unit="", color="indigo"):
@@ -457,14 +477,23 @@ def make_metric_card(icon, label, value, unit="", color="indigo"):
     """
 
 
-def get_metric_updates(fps=0.0, det=0, tracks=0, cpu=0.0, ram=0.0):
-    return (
-        make_metric_card("⚡", "Processing Speed", f"{fps:.1f}", "FPS", "indigo"),
-        make_metric_card("🔍", "Detections", f"{det}", "", "emerald"),
-        make_metric_card("🛸", "Active Tracks", f"{tracks}", "", "amber"),
-        make_metric_card("💻", "CPU Usage", f"{cpu:.1f}", "%", "rose"),
-        make_metric_card("💾", "RAM Usage", f"{ram:.1f}", "%", "sky"),
-    )
+def get_metric_updates(fps=0.0, det=0, tracks=0, cpu=0.0, ram=0.0, device="cpu", gpu_load=0.0, gpu_vram=0.0):
+    if device == "cuda":
+        return (
+            make_metric_card("⚡", "Processing Speed", f"{fps:.1f}", "FPS", "indigo"),
+            make_metric_card("🔍", "Detections", f"{det}", "", "emerald"),
+            make_metric_card("🛸", "Active Tracks", f"{tracks}", "", "amber"),
+            make_metric_card("🚀", "GPU Load", f"{gpu_load:.1f}", "%", "rose"),
+            make_metric_card("📼", "GPU VRAM", f"{gpu_vram:.1f}", "%", "sky"),
+        )
+    else:
+        return (
+            make_metric_card("⚡", "Processing Speed", f"{fps:.1f}", "FPS", "indigo"),
+            make_metric_card("🔍", "Detections", f"{det}", "", "emerald"),
+            make_metric_card("🛸", "Active Tracks", f"{tracks}", "", "amber"),
+            make_metric_card("💻", "CPU Usage", f"{cpu:.1f}", "%", "rose"),
+            make_metric_card("💾", "RAM Usage", f"{ram:.1f}", "%", "sky"),
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -501,10 +530,10 @@ def on_start_click():
     return gr.update(visible=False), gr.update(visible=True)
 
 
-def on_stop_click():
+def on_stop_click(device="cpu"):
     """Signal stop and swap buttons back: hide Stop, show Start, reset metrics, hide video outputs."""
     _stop_event.set()
-    resets = get_metric_updates(0.0, 0, 0, 0.0, 0.0)
+    resets = get_metric_updates(0.0, 0, 0, 0.0, 0.0, device=device)
     return (
         "⏹️  **Stopped** — tracking was cancelled.",
         gr.update(visible=True),
@@ -513,6 +542,23 @@ def on_stop_click():
         gr.update(visible=False),
         gr.update(visible=False),
     )
+
+
+def on_device_change(device_choice):
+    """Dynamically swap fourth and fifth cards between CPU/RAM and GPU Load/VRAM when the device selection changes."""
+    if device_choice == "cuda":
+        gpu_load, gpu_vram = get_gpu_telemetry()
+        return (
+            make_metric_card("🚀", "GPU Load", f"{gpu_load:.1f}", "%", "rose"),
+            make_metric_card("📼", "GPU VRAM", f"{gpu_vram:.1f}", "%", "sky"),
+        )
+    else:
+        cpu_val = psutil.cpu_percent()
+        ram_val = psutil.virtual_memory().percent
+        return (
+            make_metric_card("💻", "CPU Usage", f"{cpu_val:.1f}", "%", "rose"),
+            make_metric_card("💾", "RAM Usage", f"{ram_val:.1f}", "%", "sky"),
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -541,27 +587,42 @@ def run_pipeline(
     ram = lambda: psutil.virtual_memory().percent
     fmt_key = label_to_key(format_label)
 
+    # Telemetry values
+    cpu_val = cpu()
+    ram_val = ram()
+    gpu_load_val = 0.0
+    gpu_vram_val = 0.0
+
+    if device == "cuda":
+        gpu_load_val, gpu_vram_val = get_gpu_telemetry()
+
+    metrics = lambda f, d, t: get_metric_updates(
+        fps=f, det=d, tracks=t,
+        cpu=cpu_val, ram=ram_val,
+        device=device, gpu_load=gpu_load_val, gpu_vram=gpu_vram_val
+    )
+
     # Helper function to reset file & video displays during processing
     reset_outputs = (gr.update(visible=False), gr.update(visible=False))
 
-    yield "⏳  Preparing…", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
+    yield "⏳  Preparing…", None, *metrics(0.0, 0, 0), *reset_outputs
 
     # ── Step 1: resolve source ────────────────────────────────────────
     source = None
     if "Upload" in input_type and video_file:
         source = video_file
     elif "YouTube" in input_type and yt_url:
-        yield "⬇️  Downloading from YouTube…", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
+        yield "⬇️  Downloading from YouTube…", None, *metrics(0.0, 0, 0), *reset_outputs
         try:
             source = download_youtube_video(yt_url.strip())
         except Exception as e:
-            yield f"❌  YouTube download failed: {e}", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
+            yield f"❌  YouTube download failed: {e}", None, *metrics(0.0, 0, 0), *reset_outputs
             return
     elif "stream" in input_type.lower() and stream_url:
         source = stream_url.strip()
 
     if not source:
-        yield "❌  No input provided. Please upload a video, paste a link, or enter a stream URL above.", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
+        yield "❌  No input provided. Please upload a video, paste a link, or enter a stream URL above.", None, *metrics(0.0, 0, 0), *reset_outputs
         return
 
     # Create a unique output path using the input filename and a timestamp
@@ -574,34 +635,32 @@ def run_pipeline(
     if not is_model_present(fmt_key, actual_precision):
         base_model = "weights/best.pt"
         if not Path(base_model).exists():
-            yield "❌  Base model `weights/best.pt` not found. Cannot build the requested format.", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
+            yield "❌  Base model `weights/best.pt` not found. Cannot build the requested format.", None, *metrics(0.0, 0, 0), *reset_outputs
             return
 
-        yield f"🔨  Building **{format_label}** ({precision}). This may take a while…", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
+        yield f"🔨  Building **{format_label}** ({precision}). This may take a while…", None, *metrics(0.0, 0, 0), *reset_outputs
         half = precision == "fp16"
         int8 = precision == "int8"
         log_lines = []
         for line in trigger_model_optimizer(base_model, fmt_key, half=half, int8=int8):
             if _stop_event.is_set():
-                yield "⏹️  **Stopped** — model build was cancelled.", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
+                yield "⏹️  **Stopped** — model build was cancelled.", None, *metrics(0.0, 0, 0), *reset_outputs
                 return
             log_lines.append(line)
             recent = "\n".join(log_lines[-6:])
-            yield f"🔨  Building model…\n```\n{recent}\n```", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
+            yield f"🔨  Building model…\n```\n{recent}\n```", None, *metrics(0.0, 0, 0), *reset_outputs
 
     # ── Step 3: load model path ───────────────────────────────────────
     model_path = get_model_path(fmt_key, actual_precision)
     if not model_path:
-        yield "❌  Could not locate the model after building. Check the weights/ directory.", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
+        yield "❌  Could not locate the model after building. Check the weights/ directory.", None, *metrics(0.0, 0, 0), *reset_outputs
         return
 
-    yield f"✅  Model loaded: `{Path(model_path).name}`. Starting tracking…", None, *get_metric_updates(0.0, 0, 0, cpu(), ram()), *reset_outputs
+    yield f"✅  Model loaded: `{Path(model_path).name}`. Starting tracking…", None, *metrics(0.0, 0, 0), *reset_outputs
 
     # ── Step 4: stream inference frames ───────────────────────────────
     try:
         frame_idx = 0
-        cpu_val = cpu()
-        ram_val = ram()
         for frame, fps, detection_count, track_count in infer_video(
             model_path,
             source,
@@ -613,7 +672,7 @@ def run_pipeline(
             device=device,
         ):
             if _stop_event.is_set():
-                yield "⏹️  **Stopped** — tracking was cancelled by user.", frame, *get_metric_updates(0.0, 0, 0, cpu_val, ram_val), *reset_outputs
+                yield "⏹️  **Stopped** — tracking was cancelled by user.", frame, *metrics(0.0, 0, 0), *reset_outputs
                 return
             
             # Throttle telemetry checks to every 10 frames to maximize inference FPS
@@ -621,13 +680,15 @@ def run_pipeline(
             if frame_idx % 10 == 0:
                 cpu_val = cpu()
                 ram_val = ram()
+                if device == "cuda":
+                    gpu_load_val, gpu_vram_val = get_gpu_telemetry()
                 
-            yield "🟢  Tracking in progress…", frame, *get_metric_updates(fps, detection_count, track_count, cpu_val, ram_val), *reset_outputs
+            yield "🟢  Tracking in progress…", frame, *metrics(fps, detection_count, track_count), *reset_outputs
         
         # When successfully finished, expose the download file and replay video!
-        yield "🏁  **Done!** Tracking finished successfully.", None, *get_metric_updates(0.0, 0, 0, cpu_val, ram_val), gr.update(visible=True, value=out_video_path), gr.update(visible=True, value=out_video_path)
+        yield "🏁  **Done!** Tracking finished successfully.", None, *metrics(0.0, 0, 0), gr.update(visible=True, value=out_video_path), gr.update(visible=True, value=out_video_path)
     except Exception as e:
-        yield f"❌  Inference error: {e}", None, *get_metric_updates(0.0, 0, 0, cpu_val, ram_val), *reset_outputs
+        yield f"❌  Inference error: {e}", None, *metrics(0.0, 0, 0), *reset_outputs
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -728,9 +789,10 @@ def build_app():
                         if torch.cuda.is_available():
                             device_choices.append("cuda")
                             
+                        default_device = "cuda" if torch.cuda.is_available() else "cpu"
                         device = gr.Dropdown(
                             choices=device_choices,
-                            value="cpu",
+                            value=default_device,
                             label="Device",
                             interactive=True,
                         )
@@ -807,8 +869,13 @@ def build_app():
                     fps_card = gr.HTML(make_metric_card("⚡", "Processing Speed", "0.0", "FPS", "indigo"))
                     det_card = gr.HTML(make_metric_card("🔍", "Detections", "0", "", "emerald"))
                     track_card = gr.HTML(make_metric_card("🛸", "Active Tracks", "0", "", "amber"))
-                    cpu_card = gr.HTML(make_metric_card("💻", "CPU Usage", "0.0", "%", "rose"))
-                    ram_card = gr.HTML(make_metric_card("💾", "RAM Usage", "0.0", "%", "sky"))
+                    if torch.cuda.is_available():
+                        gpu_load, gpu_vram = get_gpu_telemetry()
+                        cpu_card = gr.HTML(make_metric_card("🚀", "GPU Load", f"{gpu_load:.1f}", "%", "rose"))
+                        ram_card = gr.HTML(make_metric_card("📼", "GPU VRAM", f"{gpu_vram:.1f}", "%", "sky"))
+                    else:
+                        cpu_card = gr.HTML(make_metric_card("💻", "CPU Usage", "0.0", "%", "rose"))
+                        ram_card = gr.HTML(make_metric_card("💾", "RAM Usage", "0.0", "%", "sky"))
 
                 show_feed = gr.Checkbox(
                     label="Show live tracking feed",
@@ -847,6 +914,12 @@ def build_app():
             fn=on_format_change,
             inputs=model_format,
             outputs=[precision, format_desc, availability],
+        )
+
+        device.change(
+            fn=on_device_change,
+            inputs=device,
+            outputs=[cpu_card, ram_card],
         )
 
         # Start click: swap buttons, then run pipeline
@@ -890,7 +963,7 @@ def build_app():
         # Stop click: signal stop + swap buttons back + reset metrics + hide download/replay
         stop_btn.click(
             fn=on_stop_click,
-            inputs=[],
+            inputs=[device],
             outputs=[
                 status_bar,
                 launch_btn,

@@ -137,7 +137,8 @@ class BOTSORT(BYTETracker):
         self.gmc = GMC(method=gmc_method)
         
         reid_weights = cfg.get("reid_weights", "resnet18")
-        self.reid = ReIDManager(model_name=reid_weights)
+        device = cfg.get("device", "cpu")
+        self.reid = ReIDManager(model_name=reid_weights, device=device)
 
     def get_fused_cost_matrix(self, tracks, detections):
         """Combine spatial (IoU) and appearance (ReID) distances to build a unified cost matrix.
