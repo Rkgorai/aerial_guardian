@@ -33,6 +33,7 @@ class AerialGuardianPipeline:
         img_size=640,
         tracker_cfg="bytetrack.yaml",
         device=device,
+        tracker_type="custom",
     ):
         self.model = YOLO(model_path, task="detect")
 
@@ -40,9 +41,12 @@ class AerialGuardianPipeline:
         self.iou_thresh = iou_thresh
         self.img_size = img_size
         self.device = device
+        self.tracker_type = tracker_type
+        self.tracker_cfg = tracker_cfg
         
         # Dynamically create tracker based on config name/path (e.g. 'bytetrack.yaml' or 'botsort.yaml')
-        self.tracker = create_tracker(tracker_cfg, device=device)
+        if self.tracker_type == "custom":
+            self.tracker = create_tracker(tracker_cfg, device=device)
         self.track_history = {}
 
     def detect(self, frame):
@@ -174,15 +178,43 @@ class AerialGuardianPipeline:
 
             frame_count += 1
 
-            t_d0 = time.perf_counter()
-            detections = self.detect(frame)
-            t_d1 = time.perf_counter()
-            total_detect_time += (t_d1 - t_d0)
+            if self.tracker_type == "custom":
+                t_d0 = time.perf_counter()
+                detections = self.detect(frame)
+                t_d1 = time.perf_counter()
+                total_detect_time += (t_d1 - t_d0)
 
-            t_tr0 = time.perf_counter()
-            tracks = self.tracker.update(detections, frame)
-            t_tr1 = time.perf_counter()
-            total_tracker_time += (t_tr1 - t_tr0)
+                t_tr0 = time.perf_counter()
+                tracks = self.tracker.update(detections, frame)
+                t_tr1 = time.perf_counter()
+                total_tracker_time += (t_tr1 - t_tr0)
+            else:
+                t_d0 = time.perf_counter()
+                # Ultralytics built-in tracker handles both detection and tracking
+                results = self.model.track(
+                    frame,
+                    persist=True,
+                    tracker=self.tracker_cfg,
+                    conf=self.conf_thresh,
+                    iou=self.iou_thresh,
+                    imgsz=self.img_size,
+                    verbose=False,
+                    device=self.device,
+                )
+                t_d1 = time.perf_counter()
+                total_detect_time += (t_d1 - t_d0)
+
+                t_tr0 = time.perf_counter()
+                tracks = []
+                if results[0].boxes.id is not None:
+                    boxes = results[0].boxes.xywh.cpu().numpy()
+                    track_ids = results[0].boxes.id.int().cpu().numpy()
+                    confs = results[0].boxes.conf.cpu().numpy()
+                    for box, track_id, conf in zip(boxes, track_ids, confs):
+                        x, y, w, h = box
+                        tracks.append([x, y, w, h, track_id, conf])
+                t_tr1 = time.perf_counter()
+                total_tracker_time += (t_tr1 - t_tr0)
 
             elapsed = time.time() - start_time
             current_fps = frame_count / elapsed if elapsed > 0 else 0
@@ -244,6 +276,7 @@ def main():
     parser.add_argument("--iou", type=float, default=0.5, help="IoU threshold")
     parser.add_argument("--imgsz", type=int, default=640, help="Image size")
     parser.add_argument("--tracker", type=str, default="bytetrack.yaml", help="Tracker config name or path")
+    parser.add_argument("--tracker_type", type=str, default="custom", choices=["custom", "ultralytics"], help="Type of tracker to use: 'custom' or 'ultralytics'")
     args = parser.parse_args()
 
     pipeline = AerialGuardianPipeline(
@@ -252,6 +285,7 @@ def main():
         iou_thresh=args.iou,
         img_size=args.imgsz,
         tracker_cfg=args.tracker,
+        tracker_type=args.tracker_type,
     )
 
     output_path = args.output
