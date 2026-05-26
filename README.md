@@ -13,6 +13,55 @@ The final fine-tuned PyTorch model (`mot_visdrone_finetuned.pt`), highly optimiz
 
 ---
 
+## 🚀 Native Installation & Setup
+
+Because compiling advanced edge formats (TensorRT, OpenVINO, NCNN) often requires specific Python versions and native build headers, we highly recommend using a local virtual environment with **Python 3.10** or **Python 3.12**.
+
+Choose one of the three industry-standard ways below to set up your environment:
+
+### Option A: Using `uv` (Fastest, Recommended ⚡)
+`uv` is extremely fast and can automatically manage Python versions.
+```bash
+# 1. Create a Python 3.10 virtual environment
+uv venv env --python 3.10
+
+# 2. Activate the environment
+source env/bin/activate
+
+# 3. Install all dependencies and the local package
+uv pip install -r requirements.txt
+uv pip install -e .
+```
+
+### Option B: Using standard Python `venv`
+```bash
+# 1. Create environment (ensure python 3.10 or 3.12 is installed natively)
+python3.10 -m venv env
+
+# 2. Activate the environment
+source env/bin/activate
+
+# 3. Upgrade pip and install dependencies + package
+pip install --upgrade pip
+pip install -r requirements.txt
+pip install -e .
+```
+
+### Option C: Using `conda`
+```bash
+# 1. Create a Conda environment with Python 3.10
+conda create -n aerial_guardian python=3.10 -y
+
+# 2. Activate the environment
+conda activate aerial_guardian
+
+# 3. Install all dependencies and the local package
+pip install -r requirements.txt
+pip install -e .
+```
+
+---
+
 ## 📊 Summary Report: Tackling Drone Challenges
 
 Based on the core challenges of aerial object tracking, here is the architectural and engineering approach utilized by Aerial Guardian:
@@ -25,9 +74,9 @@ Significant camera motion (ego-motion) is the primary cause of ID switching in d
 * **Global Motion Compensation (GMC)**: Utilizing BoT-SORT, the pipeline extracts ORB keypoints from the background to estimate camera homography, mathematically warping the previous frame's bounding box tracks to the current frame before Kalman filtering. This neutralizes drone drift.
 * **Low-Confidence Association**: BYTE association logic is heavily utilized to recover temporarily occluded targets (e.g., a person walking under a tree) by retaining low-confidence detection boxes that traditional trackers normally discard.
 
-### 3. Edge Hardware Adaptation (NVIDIA Jetson)
-For physical deployment on edge devices like the NVIDIA Jetson Nano or Orin, the pipeline balances inference speed and precision:
-* **Automated Format Compilation**: The PyTorch model is systematically exported to TensorRT (`.engine`), utilizing FP16 or INT8 quantization to maximize hardware Tensor Core utilization while keeping the model footprint well under 300MB.
+### 3. Edge Hardware Adaptation
+For physical deployment on edge devices like the NVIDIA Jetson Nano/Orin:
+* **Automated Format Compilation**: The PyTorch model is systematically exported to TensorRT (`.engine`), utilizing FP16 or INT8 quantization to maximize hardware Tensor Core utilization while keeping the model footprint under 300MB.
 * **Vectorized Overhead**: Tracker matching logic (IoU matrices) is heavily vectorized using NumPy broadcasting to prevent CPU bottlenecking on low-power ARM CPUs.
 * **Hardware Video Encoding**: The tracking loop offloads video writing to FFmpeg NVENC (hardware-accelerated h264), freeing up the CPU for Kalman filtering.
 
@@ -35,7 +84,9 @@ For physical deployment on edge devices like the NVIDIA Jetson Nano or Orin, the
 
 ## 📈 VisDrone Validation Benchmark Report
 
-Performance metrics evaluated on the VisDrone Validation Dataset using various models. The targeted fine-tuning yielded significant gains.
+> ⚠️ **Test Environment**: All benchmarks listed below were executed on a **Google Colab Tesla T4 GPU**.
+
+Performance metrics evaluated directly on the VisDrone Validation Dataset. The targeted fine-tuning yielded massive gains in both mAP accuracy and execution speed.
 
 ### Accuracy Metrics
 | Model | mAP50 | mAP50-95 | Precision | Recall |
@@ -57,7 +108,7 @@ Performance metrics evaluated on the VisDrone Validation Dataset using various m
 
 ## ⚡ Edge Format Evaluation Data
 
-The pipeline natively converts models into numerous edge formats. Below is the automated benchmark extracted directly from `aerial_guardian/evaluation/benchmark_results/results.csv`, showcasing execution speeds across formats:
+The pipeline natively converts models into numerous edge formats. Below is the automated benchmark extracted directly from `aerial_guardian/evaluation/benchmark_results/results.csv`, showcasing execution speeds across formats natively deployed on a **Google Colab Tesla T4 GPU**:
 
 | Model Format | Precision | File Size (MB) | Avg Latency (ms) | Avg FPS | P95 Latency (ms) |
 | :--- | :---: | :---: | :---: | :---: | :---: |
@@ -69,7 +120,18 @@ The pipeline natively converts models into numerous edge formats. Below is the a
 | `best_ncnn_model` | FP16 | 21.40 MB | 340.00 ms | 2.94 | 419.51 ms |
 | `best_full_integer_quant` (TFLite) | INT8 | 10.98 MB | 507.16 ms | 1.97 | 670.80 ms |
 
-*(Note: CPU-based formats like OpenVINO, TFLite, and NCNN execute significantly slower than GPU-accelerated formats like TensorRT and ONNX on the same machine).*
+---
+
+## 🧩 Supported Model Formats Explained
+
+The Aerial Guardian project is designed to run inference not just in standard PyTorch, but optimized heavily for target environments. 
+
+1. **PyTorch (`.pt`)**: The standard training and development format. Highly flexible but typically runs heavier inference payloads than compiled formats.
+2. **ONNX (`.onnx`)**: Open Neural Network Exchange. A universal interoperability format. Highly recommended for standard server GPU deployments (`onnxruntime-gpu`) as it offers excellent plug-and-play speed with minimal environment setup.
+3. **TensorRT (`.engine`)**: NVIDIA's ultimate optimization engine. Extremely fast natively on NVIDIA Edge devices (like Jetson platforms) and datacenter GPUs (like Tesla T4). Compiling to INT8 or FP16 activates NVIDIA Tensor Cores for maximum throughput. Engine files are hardware-specific (they must be compiled on the target GPU architecture).
+4. **OpenVINO**: Intel's optimization toolkit. This is the absolute best format for edge devices without a dedicated GPU that must rely solely on an Intel CPU or integrated GPU (iGPU).
+5. **NCNN**: Tencent's highly optimized neural network inference framework tailored for mobile platforms. Excellent for Android or ARM-based architectures without heavy proprietary libraries.
+6. **TFLite (`.tflite`)**: TensorFlow Lite. Ideal for embedded environments and mobile edge devices. We support INT8 quantization which massively shrinks the model to ~10MB for deeply constrained environments.
 
 ---
 
@@ -104,6 +166,19 @@ python -m aerial_guardian.tracking.pipeline \
     --video_encoder ffmpeg \
     --tracker_type ultralytics
 ```
+
+#### Complete CLI Flag Explanations:
+| Parameter | Default | Description |
+| :--- | :---: | :--- |
+| `--model` | *(required)* | Path to your detection weights (`.pt`, `.onnx`, `.engine`, etc.) |
+| `--input` | *(required)* | Path to your input video file to be tracked. |
+| `--output` | `output.mp4` | Path to save the annotated tracking video. Setting this to `none` or `""` will bypass video writing entirely, allowing you to benchmark raw tracking speed without disk I/O bottlenecking. |
+| `--video_encoder` | `opencv` | Options are `opencv` or `ffmpeg`. Using `ffmpeg` will attempt to use NVENC hardware acceleration (highly recommended if running on Colab/CUDA). |
+| `--tracker_type` | `custom` | Options are `custom` or `ultralytics`. `custom` utilizes Aerial Guardian's independently decoupled tracker components. `ultralytics` utilizes YOLO's bundled internal tracker. |
+| `--conf` | `0.15` | Confidence threshold for bounding box detection. Decrease this if you want higher recall on extremely small, blurry subjects. |
+| `--iou` | `0.5` | Intersection over Union (IoU) threshold for Non-Maximum Suppression (NMS). |
+| `--imgsz` | `640` | Input resolution inference scale. |
+| `--tracker` | `bytetrack.yaml` | Tracker algorithm configuration file. Acceptable options are `bytetrack.yaml` (faster) or `botsort.yaml` (includes camera motion compensation and appearance re-ID, slightly slower). |
 
 ### 3. Launching the Gradio Web UI
 The project features a premium, responsive Web UI to visually track targets, switch between precision formats, and analyze telemetry metrics live.
