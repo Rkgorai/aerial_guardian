@@ -2,182 +2,121 @@
 
 Lightweight, high-throughput multi-object detection and tracking pipeline optimized for aerial imagery. Designed specifically for tracking "Persons" from moving drone platforms under ego-motion, occlusions, and scale changes, with an end-to-end edge deployment optimization suite.
 
-> **Target Benchmark**: Developed for the VisDrone MOT challenge, achieving real-time execution speeds (up to **240+ FPS** on edge GPUs and **7+ FPS** on standard host CPUs) under a strict **300MB footprint budget**.
+> **Target Benchmark**: Developed for the VisDrone MOT challenge to accurately track persons from a moving drone while achieving real-time execution speeds on lightweight computing hardware.
 
 ---
 
-## ✨ Key Capabilities
+## 📥 Pre-trained Models
 
-* **YOLO26s Target Detection** — Fine-tuned specifically for person detection in high-altitude aerial imagery (~10MB footprint, 9.5M params).
-* **Stabilized BoT-SORT & BYTE Tracking** — Dual association tracker pipeline with coordinate-space stabilized Kalman XYWH filtering.
-* **Camera Ego-Motion Correction** — ORB keypoint extraction and RANSAC homography estimation (GMC) to prevent tracking drift during rapid drone movement.
-* **Appearance Re-identification** — ResNet18 Cosine distance embeddings with HSV color histogram fallbacks for tracking continuity through occlusions.
-* **Unified Telemetry HUD Visualization** — Overlays format tags, input resolution, inference latency (ms), and frame-by-frame FPS badges natively.
-* **Automated Multi-Format Edge Exporter** — Systematically compiles weights into **12 standard edge formats** (ONNX, TensorRT, OpenVINO, TFLite, NCNN) at all precision ranges (`FP32`, `FP16`, `INT8`).
-* **Recursive & Protected Benchmarking** — Multi-format performance analyzer with recursive scanning, package directory exclusions, and raw JSON/CSV data sheets exports.
-* **Flexible Native Setup** — Optimized for universal execution natively across `uv`, standard `pip`, or `conda` environments.
+The final fine-tuned PyTorch model (`mot_visdrone_finetuned.pt`), highly optimized for person detection on the VisDrone dataset, can be downloaded directly here:
+**[Download Fine-tuned YOLO Model](https://drive.google.com/file/d/1GuKD-B_mH8sCiQMK25qeLnRdp-9CJnde/view?usp=sharing)**
 
 ---
 
-## 📁 Repository Directory Structure
+## 📊 Summary Report: Tackling Drone Challenges
 
-```
-aerial_guardian/
-├── aerial_guardian/           # Core Python Package
-│   ├── tracking/              # Detection and Tracking Pipeline
-│   │   ├── pipeline.py
-│   │   └── algorithms/        # BoT-SORT & BYTE trackers
-│   ├── evaluation/            # Edge model benchmarking
-│   │   ├── edge_benchmarker.py
-│   │   └── benchmark_results/
-│   └── export/                # Quantization & Model Compilation
-│       └── model_optimizer.py
-├── scripts/                   # Standalone utilities
-│   ├── convert_visdrone_to_yolo.py
-│   └── generate_video_from_frames.py
-├── notebooks/                 # Jupyter notebooks for training
-├── data/                      # Input videos and test datasets
-├── weights/                   # Trained models and edge formats
-├── docs/                      # Auxiliary documentation
-├── pyproject.toml             # Python package definition
-└── README.md
-```
+Based on the core challenges of aerial object tracking, here is the architectural and engineering approach utilized by Aerial Guardian:
+
+### 1. Choice of Architecture & Small Object Detection
+Drones capture subjects at extremely high altitudes, resulting in tiny pixel footprints for targets like persons. We utilized the **YOLOv8** architecture as a base, fine-tuning it heavily on the VisDrone dataset (`mot_visdrone_finetuned.pt`). YOLOv8 features an anchor-free detection head and multi-scale feature pyramids (FPN+PAN), which allows it to fuse high-resolution spatial details with deep semantic features. This maximizes small object recall while maintaining the minimal parameter count required for drone payloads.
+
+### 2. Addressing "ID Switching" & Ego-Motion
+Significant camera motion (ego-motion) is the primary cause of ID switching in drone footage. We mitigate this using a dual-layered tracking approach:
+* **Global Motion Compensation (GMC)**: Utilizing BoT-SORT, the pipeline extracts ORB keypoints from the background to estimate camera homography, mathematically warping the previous frame's bounding box tracks to the current frame before Kalman filtering. This neutralizes drone drift.
+* **Low-Confidence Association**: BYTE association logic is heavily utilized to recover temporarily occluded targets (e.g., a person walking under a tree) by retaining low-confidence detection boxes that traditional trackers normally discard.
+
+### 3. Edge Hardware Adaptation (NVIDIA Jetson)
+For physical deployment on edge devices like the NVIDIA Jetson Nano or Orin, the pipeline balances inference speed and precision:
+* **Automated Format Compilation**: The PyTorch model is systematically exported to TensorRT (`.engine`), utilizing FP16 or INT8 quantization to maximize hardware Tensor Core utilization while keeping the model footprint well under 300MB.
+* **Vectorized Overhead**: Tracker matching logic (IoU matrices) is heavily vectorized using NumPy broadcasting to prevent CPU bottlenecking on low-power ARM CPUs.
+* **Hardware Video Encoding**: The tracking loop offloads video writing to FFmpeg NVENC (hardware-accelerated h264), freeing up the CPU for Kalman filtering.
 
 ---
 
-## 🚀 Native Installation & Setup
+## 📈 VisDrone Validation Benchmark Report
 
-Since pre-release CPython versions (like Python 3.14) do not yet have stable compiled wheels for deep learning backends (like TensorFlow, ONNX Runtime, OpenVINO, or NCNN), you **must** set up a local virtual environment using a stable Python version (like **Python 3.10** or **Python 3.12**).
+Performance metrics evaluated on the VisDrone Validation Dataset using various models. The targeted fine-tuning yielded significant gains.
 
-Choose one of the three industry-standard ways below to set up your environment natively:
+### Accuracy Metrics
+| Model | mAP50 | mAP50-95 | Precision | Recall |
+| :--- | :---: | :---: | :---: | :---: |
+| `yolo26s.pt` | 0.2994 | 0.1388 | 0.5232 | 0.4372 |
+| `yolov8s.pt` | 0.3606 | 0.1518 | 0.5164 | 0.4841 |
+| `mot_finetuned.pt` | 0.3468 | 0.1478 | 0.4591 | 0.4247 |
+| **`mot_visdrone_finetuned.pt`** | **0.4685** | **0.2031** | **0.4882** | **0.5200** |
 
-### Option A: Using `uv` (Fastest, Recommended ⚡)
-`uv` is extremely fast and can automatically manage Python versions. Even if your host system only has Python 3.14, `uv` will automatically download and install Python 3.10/3.12 for you:
-```bash
-# 1. Create a Python 3.10 virtual environment
-uv venv env --python 3.10
-
-# 2. Activate the environment
-source env/bin/activate
-
-# 3. Install all edge dependencies and local package
-uv pip install -r requirements.txt
-uv pip install -e .
-```
-
-### Option B: Using standard Python `venv`
-```bash
-# 1. Create environment (ensure python 3.10 or 3.12 is installed on your system)
-python3.10 -m venv env
-
-# 2. Activate the environment
-source env/bin/activate
-
-# 3. Upgrade pip and install dependencies + package
-pip install --upgrade pip
-pip install -r requirements.txt
-pip install -e .
-```
-
-### Option C: Using `conda`
-```bash
-# 1. Create a Conda environment with Python 3.10
-conda create -n aerial_guardian python=3.10 -y
-
-# 2. Activate the environment
-conda activate aerial_guardian
-
-# 3. Install all dependencies and the local package
-pip install -r requirements.txt
-pip install -e .
-```
+### Latency & Throughput Metrics
+| Model | FPS | Avg ms | P95 ms | P99 ms |
+| :--- | :---: | :---: | :---: | :---: |
+| `yolo26s.pt` | 86.29 | 11.59 | 12.27 | 14.25 |
+| `yolov8s.pt` | 112.55 | 8.88 | 10.39 | 14.06 |
+| `mot_finetuned.pt` | 83.58 | 11.96 | 13.10 | 13.78 |
+| **`mot_visdrone_finetuned.pt`**| **120.86**| **8.27** | **9.04** | **10.64** |
 
 ---
 
-## ⚙️ Edge Model Optimization Matrix (`aerial_guardian/export/model_optimizer.py`)
+## ⚡ Edge Format Evaluation Data
 
-The exporter supports a fully automated matrix mode to compile all quantizations without manual scripting, including **smart duplicate checks** to skip existing files and a **`--force` overwrite bypass**.
+The pipeline natively converts models into numerous edge formats. Below is the automated benchmark extracted directly from `aerial_guardian/evaluation/benchmark_results/results.csv`, showcasing execution speeds across formats:
 
-```bash
-# Automated compilation: Builds all 12 formats & precision combinations (onnx, tensorrt, openvino, tflite, ncnn)
-python -m aerial_guardian.export.model_optimizer --model weights/model/best.pt --formats all
+| Model Format | Precision | File Size (MB) | Avg Latency (ms) | Avg FPS | P95 Latency (ms) |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| `best.engine` (TensorRT) | INT8 | 13.52 MB | 3.89 ms | 257.00 | 4.06 ms |
+| `best.engine` (TensorRT) | FP16 | 22.81 MB | 6.77 ms | 147.50 | 8.81 ms |
+| `best.onnx` (ONNX GPU) | FP16 | 21.65 MB | 10.44 ms | 95.70 | 14.33 ms |
+| `best.pt` (PyTorch) | FP32 | 21.45 MB | 10.51 ms | 95.14 | 11.42 ms |
+| `best_int8_openvino` | INT8 | 11.16 MB | 224.01 ms | 4.46 | 287.52 ms |
+| `best_ncnn_model` | FP16 | 21.40 MB | 340.00 ms | 2.94 | 419.51 ms |
+| `best_full_integer_quant` (TFLite) | INT8 | 10.98 MB | 507.16 ms | 1.97 | 670.80 ms |
 
-# Force re-compile and overwrite existing formats
-python -m aerial_guardian.export.model_optimizer --model weights/model/best.pt --formats all --force
-
-# Custom export targeting specific formats
-python -m aerial_guardian.export.model_optimizer --model weights/model/best.pt --formats onnx,tflite --half
-```
-
-### Structured Output Directories:
-Models are automatically reorganized into structured folders relative to your base weights checkpoint:
-* **ONNX FP32** ➔ `weights/model/onnx/fp32/best.onnx`
-* **TensorRT FP16** ➔ `weights/model/tensorrt/fp16/best.engine`
-* **OpenVINO INT8** ➔ `weights/model/openvino/int8/best_int8_openvino_model/`
-* **TFLite INT8** ➔ `weights/model/tflite/int8/best_saved_model/`
+*(Note: CPU-based formats like OpenVINO, TFLite, and NCNN execute significantly slower than GPU-accelerated formats like TensorRT and ONNX on the same machine).*
 
 ---
 
-## 📊 Comparative Performance Reports (`aerial_guardian/evaluation/edge_benchmarker.py`)
+## 🛠️ Project Usage & Commands
 
-The recursive benchmark scanner recursively crawls your structured directories (automatically ignoring library dependencies, git caches, and system folders) to generate a Markdown table and export data sheets.
+### 1. Converting Models to Edge Formats
+The project includes a unified model optimizer to cross-compile PyTorch `.pt` files into all edge formats automatically.
 
 ```bash
-# Run recursive discovery benchmark and export results
-python -m aerial_guardian.evaluation.edge_benchmarker \
-    --model-dir weights/model/ \
-    --save-json aerial_guardian/evaluation/benchmark_results/cpu_benchmark_results.json \
-    --save-csv aerial_guardian/evaluation/benchmark_results/cpu_benchmark_results.csv
+# Automated compilation: Builds all 12 combinations (onnx, tensorrt, openvino, tflite, ncnn)
+python -m aerial_guardian.export.model_optimizer --model weights/mot_visdrone_finetuned.pt --formats all
+
+# Custom export targeting specific formats and precisions
+python -m aerial_guardian.export.model_optimizer --model weights/mot_visdrone_finetuned.pt --formats onnx,tensorrt --half
 ```
 
-### Benchmark Summary (Google Colab GPU vs. CPU)
-
-| Model Format | Precision | File Size (MB) | Avg Latency (ms) | Avg FPS | P95 Latency (ms) | Target Hardware |
-| :--- | :---: | :---: | :---: | :---: | :---: | :--- |
-| **`best.engine` (TensorRT)** | **INT8** | 13.52 MB | **4.80 ms** | **208.27** | **5.57 ms** | NVIDIA GPU (Edge/Jetson) |
-| **`best.engine` (TensorRT)** | **FP16** | 22.82 MB | **6.49 ms** | **154.08** | **7.83 ms** | NVIDIA GPU (Edge/Jetson) |
-| **`best.pt` (PyTorch Baseline)** | **FP32** | 21.46 MB | 10.70 ms | 93.49 | 11.09 ms | GPU / Server Baseline |
-| **`best.onnx` (ONNX GPU)** | **FP16** | 21.65 MB | 9.70 ms | 103.09 | 13.85 ms | Universal GPU (CUDA) |
-| **`best_int8_openvino`** | **INT8** | 11.17 MB | 222.76 ms | 4.49 | 291.12 ms | Intel CPU / iGPU |
-| **`best_float16.tflite`** | **FP16** | 21.38 MB | 469.87 ms | 2.13 | 602.06 ms | Mobile / Embedded (ARM) |
-
----
-
-## 🎯 Running the Tracking Pipeline (`aerial_guardian/tracking/pipeline.py`)
-
-Process raw aerial video feeds frame-by-frame, execute the tracker, draw bounding boxes, IDs, and trajectory tails, and output an annotated video.
+### 2. CLI Video Tracking
+Process raw aerial videos frame-by-frame and export annotated outputs directly from the command line.
 
 ```bash
-# Default: runs ByteTrack, imgsz=640, conf=0.15
+# Basic tracking using the custom pipeline and PyTorch model
 python -m aerial_guardian.tracking.pipeline \
-    --model weights/model/onnx/fp32/best.onnx \
-    --input data/test_videos/uav0000086_00000_v.mp4 \
-    --output output/result_onnx.mp4
+    --model weights/mot_visdrone_finetuned.pt \
+    --input data/test_videos/drone_clip.mp4 \
+    --output output/result.mp4
 
-# Run BoT-SORT (GMC homography ego-motion compensation + appearance Re-ID)
+# Run with Ultralytics built-in tracker and hardware FFmpeg video encoding
 python -m aerial_guardian.tracking.pipeline \
-    --model weights/model/tensorrt/fp16/best.engine \
-    --input data/test_videos/uav0000086_00000_v.mp4 \
-    --output output/result_botsort.mp4 \
-    --tracker botsort.yaml
+    --model weights/onnx/fp16/best.onnx \
+    --input data/test_videos/drone_clip.mp4 \
+    --output output/result_fast.mp4 \
+    --video_encoder ffmpeg \
+    --tracker_type ultralytics
 ```
 
-### CLI Arguments:
+### 3. Launching the Gradio Web UI
+The project features a premium, responsive Web UI to visually track targets, switch between precision formats, and analyze telemetry metrics live.
 
-| Parameter | Default | Description |
-| :--- | :---: | :--- |
-| `--model` | *(required)* | Path to detection weights (`.pt`, `.onnx`, `.engine`, etc.) |
-| `--input` | *(required)* | Path to input aerial video file or image sequence |
-| `--output` | `output.mp4` | Path to save the annotated video result |
-| `--conf` | `0.15` | Target confidence threshold (set lower for high recall) |
-| `--iou` | `0.5` | Non-Maximum Suppression (NMS) IoU threshold |
-| `--imgsz` | `640` | Resolution for inference scaling |
-| `--tracker` | `bytetrack.yaml` | Tracker configuration file name (`bytetrack.yaml` or `botsort.yaml`) |
+```bash
+# Start the Gradio Web Dashboard
+python app.py
+```
 
----
-
-## 📚 References
-
-* **ByteTrack**: Zhang et al., *ByteTrack: Multi-Object Tracking by Associating Every Detection Box* — https://github.com/ifzhang/ByteTrack
-* **BoT-SORT**: Aharon et al., *BoT-SORT: Robust Associations Multi-Pedestrian Tracking* — https://github.com/NirAharon/BoT-SORT
-* **VisDrone MOT**: https://github.com/VisDrone/VisDrone-Dataset
+**How to use the UI**:
+1. Open the provided Local URL in your browser (e.g., `http://localhost:7860`).
+2. **Upload** your drone video file, paste a YouTube link, or provide an RTSP stream.
+3. Select your desired **Model Format** (e.g., PyTorch, TensorRT, ONNX). If the edge format isn't compiled yet, the system will automatically build it for you!
+4. Tweak the tracking thresholds (Confidence, IoU) and select the tracker algorithm (`botsort` or `bytetrack`).
+5. Click **Start Tracking**. 
+6. A real-time progress bar will show the completion status. Once finished, you can replay the annotated tracked video directly in the browser and download the `.mp4` file!
