@@ -279,7 +279,7 @@ def download_youtube_video(url: str, output_path: str = "downloads/youtube_video
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
 
     ydl_opts = {
-        "format": "bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "format": "best[ext=mp4][height<=720]/best[height<=720]/best[ext=mp4]/best",
         "outtmpl": output_path,
         "quiet": True,
         "no_warnings": True,
