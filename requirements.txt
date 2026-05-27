@@ -23,3 +23,5 @@ ncnn>=1.0.0
 gradio>=4.0.0
 yt-dlp>=2023.10.13
 psutil>=5.9.0
+
+gdown

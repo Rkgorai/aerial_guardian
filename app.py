@@ -10,11 +10,22 @@ Usage:
 """
 
 import threading
-import psutil
-import torch
+import os
+import sys
 import time
-import gradio as gr
+import argparse
+import threading
 from pathlib import Path
+
+# Suppress verbose C++ logs from OpenCV and ONNX Runtime
+os.environ["OPENCV_LOG_LEVEL"] = "SILENT"
+os.environ["OPENCV_VIDEOIO_DEBUG"] = "0"
+os.environ["ORT_LOGGING_LEVEL"] = "3"
+
+import cv2
+import gradio as gr
+import torch
+import psutil
 
 # Global stop flag — checked every frame during inference
 _stop_event = threading.Event()
@@ -31,6 +42,8 @@ from ui.utils import (
     trigger_model_optimizer,
     infer_video,
     download_youtube_video,
+    download_yolo_model_generator,
+    get_active_model_name,
 )
 
 
@@ -633,9 +646,9 @@ def run_pipeline(
     actual_precision = precision if fmt_key != "pt" else "default"
 
     if not is_model_present(fmt_key, actual_precision):
-        base_model = "weights/best.pt"
-        if not Path(base_model).exists():
-            yield "❌  Base model `weights/best.pt` not found. Cannot build the requested format.", None, *metrics(0.0, 0, 0), *reset_outputs
+        base_model = get_model_path("pt", "default")
+        if not base_model or not Path(base_model).exists():
+            yield "❌  Base PyTorch model not found. Cannot build the requested format.", None, *metrics(0.0, 0, 0), *reset_outputs
             return
 
         yield f"🔨  Building **{format_label}** ({precision}). This may take a while…", None, *metrics(0.0, 0, 0), *reset_outputs
@@ -716,6 +729,21 @@ def build_app():
         </div>
         """)
 
+        # ══════════════ MISSING MODEL UI ═══════════════════════════════════
+        missing_model_group = gr.Group(visible=not is_model_present("pt", "default"), elem_classes=["card"])
+        with missing_model_group:
+            gr.HTML("""
+            <div class="card-header" style="background-color: rgba(239, 68, 68, 0.1); border-left: 4px solid #ef4444;">
+                <div class="card-icon">⚠️</div>
+                <div>
+                    <p class="card-title">Base PyTorch Model Not Found</p>
+                    <p class="card-subtitle">No YOLO weights detected in the <code>weights/</code> directory. Please upload a model or download the default weights to continue.</p>
+                </div>
+            </div>
+            """)
+            download_btn = gr.Button("⬇️ Download Default Fine-Tuned Model (22 MB)", variant="primary")
+            download_status = gr.Markdown("", visible=False)
+
         # ══════════════ TOP ROW — Input + Model side by side ══════════
         with gr.Row(equal_height=True):
 
@@ -779,7 +807,13 @@ def build_app():
                             value=format_choices[0],
                             label="Format",
                             interactive=True,
+                            scale=4
                         )
+                        upload_model = gr.UploadButton("📤", file_types=[".pt"], size="sm")
+                    
+                    active_model_display = gr.Markdown(f"**Active Base Model:** `{get_active_model_name()}`")
+                        
+                    with gr.Row():
                         first_precisions = get_precisions_for_format(format_choices[0])
                         precision = gr.Dropdown(
                             choices=first_precisions,
@@ -908,6 +942,35 @@ def build_app():
                 )
 
         # ══════════════ EVENT WIRING ══════════════════════════════════
+        
+        def handle_download():
+            yield gr.update(visible=True, value="⏳ Connecting..."), gr.update(interactive=False), gr.update(visible=True), gr.update()
+            for status in download_yolo_model_generator():
+                yield gr.update(value=status), gr.update(interactive=False), gr.update(visible=True), gr.update()
+            import time
+            time.sleep(1)
+            model_name = get_active_model_name()
+            gr.Info(f"Model downloaded & model selected to {model_name}")
+            # Hide the entire missing model group upon completion
+            yield gr.update(visible=False), gr.update(interactive=True), gr.update(visible=False), gr.update(value=f"**Active Base Model:** `{model_name}`")
+            
+        def handle_upload(file):
+            import shutil
+            import time
+            from pathlib import Path
+            if file:
+                timestamp = int(time.time())
+                original_name = Path(file.name).name
+                dest = Path("weights") / f"custom_{timestamp}_{original_name}"
+                dest.parent.mkdir(exist_ok=True, parents=True)
+                shutil.copy(file.name, dest)
+            model_name = get_active_model_name()
+            gr.Info(f"Changed to {model_name}")
+            return gr.update(visible=False), gr.update(value=f"**Active Base Model:** `{model_name}`")
+
+        download_btn.click(fn=handle_download, inputs=[], outputs=[download_status, download_btn, missing_model_group, active_model_display])
+        upload_model.upload(fn=handle_upload, inputs=[upload_model], outputs=[missing_model_group, active_model_display])
+
         input_type.change(
             fn=on_input_type_change,
             inputs=input_type,

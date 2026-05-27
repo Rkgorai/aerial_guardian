@@ -99,7 +99,7 @@ def scan_available_models() -> dict:
     available = {}
 
     # Check root-level PyTorch model
-    if (weights_dir / "best.pt").exists():
+    if list(weights_dir.glob("*.pt")):
         available["pt"] = ["default"]
 
     for fmt_key in ["onnx", "tensorrt", "openvino", "tflite", "ncnn"]:
@@ -116,29 +116,97 @@ def scan_available_models() -> dict:
     return available
 
 
+def _get_active_pt_path() -> Path | None:
+    """Return the most recently modified .pt model in weights/."""
+    weights_dir = Path("weights")
+    pt_files = list(weights_dir.glob("*.pt"))
+    if not pt_files:
+        return None
+    # Sort by modification time (newest first)
+    pt_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+    return pt_files[0]
+
+def get_active_model_name() -> str:
+    active_pt = _get_active_pt_path()
+    return active_pt.name if active_pt else "None"
+
+def _get_compiled_name(base_stem: str, target_fmt: str) -> str:
+    if target_fmt == "onnx": return f"{base_stem}.onnx"
+    elif target_fmt == "tensorrt": return f"{base_stem}.engine"
+    elif target_fmt == "openvino": return f"{base_stem}_openvino_model"
+    elif target_fmt == "tflite": return f"{base_stem}_saved_model"
+    elif target_fmt == "ncnn": return f"{base_stem}_ncnn_model"
+    return base_stem
+
+
 def is_model_present(format_key: str, precision: str) -> bool:
-    """Check if a specific model format + precision exists on disk."""
+    """Check if a specific model format + precision exists on disk for the active model."""
     weights_dir = Path("weights")
     if format_key == "pt":
-        return (weights_dir / "best.pt").exists()
-    model_dir = weights_dir / format_key / precision
+        return _get_active_pt_path() is not None
+        
+    active_pt = _get_active_pt_path()
+    if not active_pt:
+        return False
+        
+    target_fmt = "tensorrt" if format_key == "engine" else format_key
+    model_dir = weights_dir / target_fmt / precision
     if not model_dir.exists():
         return False
-    return any(model_dir.iterdir())
+        
+    expected_name = _get_compiled_name(active_pt.stem, target_fmt)
+    return (model_dir / expected_name).exists()
 
 
 def get_model_path(format_key: str, precision: str) -> str | None:
-    """Return the path to a compiled model, or None if not found."""
+    """Return the path to the active compiled model, or None if not found."""
     weights_dir = Path("weights")
+    active_pt = _get_active_pt_path()
+    if not active_pt:
+        return None
+        
     if format_key == "pt":
-        pt_path = weights_dir / "best.pt"
-        return str(pt_path) if pt_path.exists() else None
-    model_dir = weights_dir / format_key / precision
+        return str(active_pt)
+        
+    target_fmt = "tensorrt" if format_key == "engine" else format_key
+    model_dir = weights_dir / target_fmt / precision
     if model_dir.exists():
-        files = list(model_dir.iterdir())
-        if files:
-            return str(files[0])
+        expected_name = _get_compiled_name(active_pt.stem, target_fmt)
+        expected_path = model_dir / expected_name
+        if expected_path.exists():
+            return str(expected_path)
     return None
+
+def download_yolo_model_generator():
+    import requests
+    import sys
+    from pathlib import Path
+    weights_dir = Path("weights")
+    weights_dir.mkdir(exist_ok=True)
+    out_path = weights_dir / "mot_visdrone_finetuned.pt"
+    
+    url = "https://drive.google.com/uc?id=1GuKD-B_mH8sCiQMK25qeLnRdp-9CJnde"
+    r = requests.get(url, stream=True)
+    r.raise_for_status()
+    
+    total_size = int(r.headers.get('content-length', 0))
+    chunk_size = 1024 * 1024 # 1 MB
+    downloaded = 0
+    
+    yield f"⏳ Starting download of {total_size / (1024*1024):.1f} MB..."
+    
+    with open(out_path, 'wb') as f:
+        for chunk in r.iter_content(chunk_size=chunk_size):
+            if chunk:
+                f.write(chunk)
+                downloaded += len(chunk)
+                if total_size > 0:
+                    mb_downloaded = downloaded / (1024 * 1024)
+                    mb_total = total_size / (1024 * 1024)
+                    perc = downloaded / total_size
+                    msg = f"⏳ **Downloading:** {mb_downloaded:.1f} MB / {mb_total:.1f} MB ({(perc*100):.1f}%)"
+                    yield msg
+    yield "✅ Download complete!"
 
 
 def get_availability_summary(format_label: str) -> str:
@@ -239,13 +307,11 @@ def infer_video(
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     
     # Initialize VideoWriter using our robust abstraction
-    # Use "ffmpeg" encoder if CUDA is available, otherwise "opencv"
-    # This avoids Kaggle OpenCV v4l2m2m hardware h264 bugs
-    encoder = "ffmpeg" if device == "cuda" else "opencv"
+    # Use "ffmpeg" encoder natively, which automatically falls back: NVENC -> libx264 -> opencv
     try:
-        out = get_video_writer(output_path, fps_cap, (width, height), encoder=encoder)
+        out = get_video_writer(output_path, fps_cap, (width, height), encoder="ffmpeg")
     except Exception as e:
-        print(f"Failed to init {encoder} writer, falling back to opencv: {e}")
+        print(f"Failed to init ffmpeg writer, falling back to opencv: {e}")
         out = get_video_writer(output_path, fps_cap, (width, height), encoder="opencv")
         
     processing_times = []
