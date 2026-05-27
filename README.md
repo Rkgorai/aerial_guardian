@@ -6,9 +6,14 @@ Lightweight, high-throughput multi-object detection and tracking pipeline optimi
 
 ---
 
-## 📥 Pre-trained Models
+## 📥 Pre-trained Models & UI Management
 
-The final fine-tuned PyTorch model (`mot_visdrone_finetuned.pt`), highly optimized for person detection on the VisDrone dataset, can be downloaded directly here:
+The final fine-tuned PyTorch model (`mot_visdrone_finetuned.pt`), highly optimized for person detection on the VisDrone dataset, can be easily managed directly from the Web UI:
+
+* **Automatic Download**: If no models are detected on startup, the UI provides a one-click button to automatically download the fine-tuned PyTorch weights from Google Drive directly into your `weights/` directory.
+* **Custom Model Upload**: You can also manually upload your own `.pt` YOLO model files directly via the UI's inline upload button, which will automatically activate your custom model for inference.
+
+Alternatively, you can download the default model manually here:
 **[Download Fine-tuned YOLO Model](https://drive.google.com/file/d/1GuKD-B_mH8sCiQMK25qeLnRdp-9CJnde/view?usp=sharing)**
 
 ---
@@ -190,8 +195,9 @@ python app.py
 
 **How to use the UI**:
 1. Open the provided Local URL in your browser (e.g., `http://localhost:7860`).
-2. **Upload** your drone video file, paste a YouTube link, or provide an RTSP stream.
-3. Select your desired **Model Format** (e.g., PyTorch, TensorRT, ONNX). If the edge format isn't compiled yet, the system will automatically build it for you!
-4. Tweak the tracking thresholds (Confidence, IoU) and select the tracker algorithm (`botsort` or `bytetrack`).
-5. Click **Start Tracking**. 
-6. A real-time progress bar will show the completion status. Once finished, you can replay the annotated tracked video directly in the browser and download the `.mp4` file!
+2. **Missing Model?**: If no model is found, use the prominent Download button to fetch the default MOT+VisDrone finetuned model, or click the 📤 Upload icon next to the Format selector to upload your own.
+3. **Upload** your drone video file, paste a YouTube link, or provide an RTSP stream.
+4. Select your desired **Model Format** (e.g., PyTorch, TensorRT, ONNX). If the edge format isn't compiled yet, the system will automatically build it for you!
+5. Tweak the tracking thresholds (Confidence, IoU) and select the tracker algorithm (`botsort` or `bytetrack`).
+6. Click **Start Tracking**. 
+7. A real-time progress bar will show the completion status. Once finished, you can replay the annotated tracked video directly in the browser and download the `.mp4` file!
